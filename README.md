@@ -103,10 +103,6 @@ Author: Onurcan Genç
 
 
 
-```bash
-This `README.md` covers the project overview, installation, usage, and deployment steps while including relevant details from the files you uploaded. Let me know if you'd like any changes!
-```
-
 
 
 
