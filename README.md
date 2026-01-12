@@ -40,11 +40,16 @@ pip install -r requirements.txt
 
 3. **Set up environment variables:**
 
-- Create a ```.env``` file in the project root and define the following variables:
+- Create a ```.env``` file in the project root. You can start from `.env.example` and define:
 
 ```bash
 FLASK_SECRET_KEY=your_secret_key
 OPENAI_API_KEY=your_openai_api_key
+FLASK_RUN_HOST=127.0.0.1
+FLASK_RUN_PORT=5000
+OPENAI_RPM_LIMIT=3
+CHAT_CHUNK_MAX_CHARS=8000
+REPORT_CACHE_DIR=report_cache
 ```
 
 4. **Run the app locally:**
@@ -58,6 +63,12 @@ You can override the bind host and port when running via `python app.py`:
 
 ```bash
 FLASK_RUN_HOST=0.0.0.0 FLASK_RUN_PORT=8080 python app.py
+```
+
+You can also configure OpenAI pacing to respect your RPM limits:
+
+```bash
+OPENAI_RPM_LIMIT=3 CHAT_CHUNK_MAX_CHARS=8000 python app.py
 ```
 
 5. **Deploy on Heroku:**
@@ -108,10 +119,8 @@ Contributing
 - Feel free to fork the project, open issues, and submit pull requests. For major changes, please open an issue first to discuss what you would like to change.
 
 
-Author: Onurcan Genç 
+Orignial Author: Onurcan Genç 
 
 [Portfolio](https://onurcangenc.com.tr)
 
-
-
-
+Fixes and enhancements: [Steve Clement](https://github.com/SteveClement)
