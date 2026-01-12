@@ -9,6 +9,7 @@ from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from collections import defaultdict
 import hashlib
+import math
 import openai
 from openai import RateLimitError, APIError
 import time
@@ -274,11 +275,10 @@ def upload_csv():
     return redirect(url_for('index'))
 
 # Function to generate a psychological report
-def call_openai_with_backoff(prompt, model_name, min_request_interval):
+def call_openai_with_backoff(prompt, model_name, min_request_interval, rpm_limit):
     global openai_last_request_ts
     retry_attempts = 5
-    base_delay = 2
-    max_delay = 60
+    max_delay = 60.0
 
     for attempt in range(retry_attempts):
         now = time.time()
@@ -299,7 +299,13 @@ def call_openai_with_backoff(prompt, model_name, min_request_interval):
             openai_last_request_ts = time.time()
             return response.choices[0].message.content
         except RateLimitError:
-            delay = min_request_interval
+            if rpm_limit < 10:
+                delay = 60.0
+            else:
+                delay = min(
+                    max_delay,
+                    max(1.0, min_request_interval * (2 ** attempt))
+                )
             print(
                 "Rate limit exceeded. Retrying in "
                 f"{delay:.2f} seconds... (Attempt {attempt + 1}/{retry_attempts})"
@@ -321,6 +327,7 @@ def generate_psychological_report(chat_data):
     rpm_limit = float(os.getenv("OPENAI_RPM_LIMIT", "3"))
     min_request_interval = 60.0 / max(rpm_limit, 1.0)
     chunk_max_chars = int(os.getenv("CHAT_CHUNK_MAX_CHARS", "8000"))
+    max_chunks = int(os.getenv("CHAT_MAX_CHUNKS", "50"))
 
     cache_key_input = f"{model_name}:{chunk_max_chars}:{chat_text}"
     cache_key = hashlib.sha256(cache_key_input.encode('utf-8')).hexdigest()
@@ -330,6 +337,9 @@ def generate_psychological_report(chat_data):
             return cached.read()
 
     lines = chat_text.splitlines()
+    if max_chunks > 0:
+        target_chunk_size = math.ceil(len(chat_text) / max_chunks)
+        chunk_max_chars = max(chunk_max_chars, target_chunk_size)
     chunks = []
     current_lines = []
     current_len = 0
@@ -366,7 +376,12 @@ def generate_psychological_report(chat_data):
         Provide a comprehensive analysis of the individuals' psychological states, emotions,
         and relationships.
         """
-        content = call_openai_with_backoff(prompt, model_name, min_request_interval)
+        content = call_openai_with_backoff(
+            prompt,
+            model_name,
+            min_request_interval,
+            rpm_limit
+        )
         if content is None:
             return "Error: Rate limit exceeded after multiple attempts. Please try again later."
         with open(cache_path, "w", encoding="utf-8") as cached:
@@ -386,7 +401,12 @@ def generate_psychological_report(chat_data):
         WhatsApp Chat Data:
         {chunk}
         """
-        summary = call_openai_with_backoff(prompt, model_name, min_request_interval)
+        summary = call_openai_with_backoff(
+            prompt,
+            model_name,
+            min_request_interval,
+            rpm_limit
+        )
         if summary is None:
             return "Error: Rate limit exceeded after multiple attempts. Please try again later."
         partial_summaries.append(summary)
@@ -401,7 +421,12 @@ def generate_psychological_report(chat_data):
     {"\n\n".join(partial_summaries)}
     """
 
-    content = call_openai_with_backoff(combined_prompt, model_name, min_request_interval)
+    content = call_openai_with_backoff(
+        combined_prompt,
+        model_name,
+        min_request_interval,
+        rpm_limit
+    )
     if content is None:
         return "Error: Rate limit exceeded after multiple attempts. Please try again later."
     with open(cache_path, "w", encoding="utf-8") as cached:
@@ -415,7 +440,43 @@ def generate_word_report(analysis_text, file_name):
     doc = Document()
     doc.add_heading('Psychological Analysis Report', 0)
 
-    doc.add_paragraph(analysis_text)
+    def add_markdown_runs(paragraph, text):
+        token_pattern = r'(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)'
+        parts = re.split(token_pattern, text)
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith('**') and part.endswith('**'):
+                run = paragraph.add_run(part[2:-2])
+                run.bold = True
+            elif part.startswith('*') and part.endswith('*'):
+                run = paragraph.add_run(part[1:-1])
+                run.italic = True
+            elif part.startswith('`') and part.endswith('`'):
+                run = paragraph.add_run(part[1:-1])
+                run.font.name = 'Courier New'
+            else:
+                paragraph.add_run(part)
+
+    def render_markdown_to_docx(text):
+        for raw_line in text.splitlines():
+            line = raw_line.rstrip()
+            if not line:
+                doc.add_paragraph("")
+                continue
+            if line.startswith('#'):
+                level = len(line) - len(line.lstrip('#'))
+                heading_text = line[level:].strip()
+                doc.add_heading(heading_text, level=min(max(level, 1), 4))
+                continue
+            if line.startswith(('- ', '* ')):
+                para = doc.add_paragraph(style='List Bullet')
+                add_markdown_runs(para, line[2:].strip())
+                continue
+            para = doc.add_paragraph()
+            add_markdown_runs(para, line)
+
+    render_markdown_to_docx(analysis_text)
 
     # Save the document as a temporary file
     word_file = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
