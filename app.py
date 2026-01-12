@@ -28,6 +28,7 @@ load_dotenv()
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'fallback_secret_key')
 cache_dir = os.getenv('REPORT_CACHE_DIR', 'report_cache')
 os.makedirs(cache_dir, exist_ok=True)
+openai_last_request_ts = 0.0
 
 # Set the OpenAI API key from the environment variable
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -273,41 +274,20 @@ def upload_csv():
     return redirect(url_for('index'))
 
 # Function to generate a psychological report
-def generate_psychological_report(chat_data):
-    # Convert the chat data to a readable format
-    chat_text = ""
-    for index, row in chat_data.iterrows():
-        chat_text += f"[{row['Date']} {row['Time']}] {row['Sender']}: {row['Message']}\n"
-
-    # Prepare the prompt with chat data and the provided prompt description
-    prompt = f"""
-    For the duration of this conversation, act as an Industrial/Organizational Psychology expert 
-    with a specialization in Human Resource Management and Management. Your task is to analyze 
-    the following WhatsApp chat data and generate a psychological analysis report, considering 
-    factors like emotions, relationships, psychological conditions, and communication patterns.
-
-    WhatsApp Chat Data:
-    {chat_text}
-    
-    Based on this data, please provide a comprehensive analysis of the individuals' 
-    psychological states, emotions, and relationships.
-    """
-
-    model_name = "gpt-4o-mini"
-    cache_key = hashlib.sha256((model_name + chat_text).encode('utf-8')).hexdigest()
-    cache_path = os.path.join(cache_dir, f"{cache_key}.txt")
-    if os.path.exists(cache_path):
-        with open(cache_path, "r", encoding="utf-8") as cached:
-            return cached.read()
-
-    # Retry logic for handling rate limits
-    retry_attempts = 5  # Number of times to retry
-    base_delay = 2  # Base delay in seconds
-    max_delay = 60  # Cap delay to avoid excessively long waits
+def call_openai_with_backoff(prompt, model_name, min_request_interval):
+    global openai_last_request_ts
+    retry_attempts = 5
+    base_delay = 2
+    max_delay = 60
 
     for attempt in range(retry_attempts):
+        now = time.time()
+        elapsed = now - openai_last_request_ts
+        if elapsed < min_request_interval:
+            wait_for = min_request_interval - elapsed
+            print(f"Waiting {wait_for:.2f}s to respect RPM limit.")
+            time.sleep(wait_for)
         try:
-            # Send request to OpenAI API
             response = openai.chat.completions.create(
                 model=model_name,
                 messages=[
@@ -316,25 +296,117 @@ def generate_psychological_report(chat_data):
                 ],
                 temperature=0
             )
-            content = response.choices[0].message.content
-            with open(cache_path, "w", encoding="utf-8") as cached:
-                cached.write(content)
-            return content
-        
+            openai_last_request_ts = time.time()
+            return response.choices[0].message.content
         except RateLimitError:
-            delay = min(max_delay, base_delay * (2 ** attempt))
-            jitter = random.uniform(0, 1)
-            sleep_for = delay + jitter
+            delay = min_request_interval
             print(
                 "Rate limit exceeded. Retrying in "
-                f"{sleep_for:.2f} seconds... (Attempt {attempt + 1}/{retry_attempts})"
+                f"{delay:.2f} seconds... (Attempt {attempt + 1}/{retry_attempts})"
             )
-            time.sleep(sleep_for)
+            time.sleep(delay)
         except APIError as e:
-            return f"API error: {e}"
+            return None
 
-    return "Error: Rate limit exceeded after multiple attempts. Please try again later."
+    return None
 
+
+def generate_psychological_report(chat_data):
+    # Convert the chat data to a readable format
+    chat_text = ""
+    for index, row in chat_data.iterrows():
+        chat_text += f"[{row['Date']} {row['Time']}] {row['Sender']}: {row['Message']}\n"
+
+    model_name = "gpt-4o-mini"
+    rpm_limit = float(os.getenv("OPENAI_RPM_LIMIT", "3"))
+    min_request_interval = 60.0 / max(rpm_limit, 1.0)
+    chunk_max_chars = int(os.getenv("CHAT_CHUNK_MAX_CHARS", "8000"))
+
+    cache_key_input = f"{model_name}:{chunk_max_chars}:{chat_text}"
+    cache_key = hashlib.sha256(cache_key_input.encode('utf-8')).hexdigest()
+    cache_path = os.path.join(cache_dir, f"{cache_key}.txt")
+    if os.path.exists(cache_path):
+        with open(cache_path, "r", encoding="utf-8") as cached:
+            return cached.read()
+
+    lines = chat_text.splitlines()
+    chunks = []
+    current_lines = []
+    current_len = 0
+    for line in lines:
+        line_len = len(line) + 1
+        if current_lines and current_len + line_len > chunk_max_chars:
+            chunks.append("\n".join(current_lines))
+            current_lines = [line]
+            current_len = line_len
+        else:
+            current_lines.append(line)
+            current_len += line_len
+    if current_lines:
+        chunks.append("\n".join(current_lines))
+
+    total_parts = len(chunks)
+    print(f"Prepared {total_parts} chat chunk(s) for report generation.")
+    if total_parts > 1 and rpm_limit < 10:
+        min_request_interval = 60.0
+        print("Chunked mode enabled; waiting 60s before first OpenAI request.")
+        time.sleep(min_request_interval)
+
+    if total_parts == 1:
+        prompt = f"""
+        You will receive a WhatsApp chat snippet (part 1/1). Treat this as the full content.
+        Act as an Industrial/Organizational Psychology expert with a specialization in Human
+        Resource Management and Management. Analyze the chat data and generate a psychological
+        analysis report covering emotions, relationships, psychological conditions, and
+        communication patterns.
+
+        WhatsApp Chat Data:
+        {chunks[0]}
+
+        Provide a comprehensive analysis of the individuals' psychological states, emotions,
+        and relationships.
+        """
+        content = call_openai_with_backoff(prompt, model_name, min_request_interval)
+        if content is None:
+            return "Error: Rate limit exceeded after multiple attempts. Please try again later."
+        with open(cache_path, "w", encoding="utf-8") as cached:
+            cached.write(content)
+        return content
+
+    partial_summaries = []
+    for idx, chunk in enumerate(chunks, start=1):
+        print(f"Submitting chunk {idx}/{total_parts} to OpenAI.")
+        prompt = f"""
+        You will receive a WhatsApp chat snippet (part {idx}/{total_parts}).
+        Act as an Industrial/Organizational Psychology expert with a specialization in Human
+        Resource Management and Management. Summarize key psychological signals, emotions,
+        relationships, and communication patterns found in this snippet. Return a concise
+        bullet list of findings and notable quotes with speaker names.
+
+        WhatsApp Chat Data:
+        {chunk}
+        """
+        summary = call_openai_with_backoff(prompt, model_name, min_request_interval)
+        if summary is None:
+            return "Error: Rate limit exceeded after multiple attempts. Please try again later."
+        partial_summaries.append(summary)
+
+    print("Submitting final combined summary request to OpenAI.")
+    combined_prompt = f"""
+    You received {total_parts} partial summaries from a WhatsApp chat. Combine them into a
+    single comprehensive psychological analysis report. Focus on emotions, relationships,
+    psychological conditions, and communication patterns across the full conversation.
+
+    Partial Summaries:
+    {"\n\n".join(partial_summaries)}
+    """
+
+    content = call_openai_with_backoff(combined_prompt, model_name, min_request_interval)
+    if content is None:
+        return "Error: Rate limit exceeded after multiple attempts. Please try again later."
+    with open(cache_path, "w", encoding="utf-8") as cached:
+        cached.write(content)
+    return content
 
 
 def generate_word_report(analysis_text, file_name):
