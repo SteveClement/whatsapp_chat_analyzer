@@ -54,6 +54,12 @@ flask run
 The app will be available at http://127.0.0.1:5000/.
 ```
 
+You can override the bind host and port when running via `python app.py`:
+
+```bash
+FLASK_RUN_HOST=0.0.0.0 FLASK_RUN_PORT=8080 python app.py
+```
+
 5. **Deploy on Heroku:**
 
 - Use the ```Procfile``` provided for deployment on Heroku.
@@ -76,6 +82,11 @@ Download CSV:
 4. Generating Psychological Report:
 
 - You can also upload CSV/Excel files to generate psychological reports about the chat participants.
+
+## Supported Export Formats
+
+- Desktop export: `[dd/mm/yyyy, HH:MM:SS] Sender: message` (also accepts `dd.mm.yyyy`).
+- Mobile export: `m/d/yy, HH:MM - Sender: message` (system lines without a sender are supported).
 
 ## File Structure
 
@@ -100,8 +111,6 @@ Contributing
 Author: Onurcan Genç 
 
 [Portfolio](https://onurcangenc.com.tr)
-
-
 
 
 
