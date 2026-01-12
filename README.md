@@ -26,13 +26,11 @@ The **WhatsApp Chat Analyzer** is a web-based application that allows users to u
 1. **Clone the repository:**
 
 ```bash
-git clone https://github.com/yourusername/whatsapp-chat-analyzer.git
-   cd whatsapp-chat-analyzer
+git clone https://github.com/onurcangnc/whatsapp_chat_analyzer.git
+cd whatsapp_chat_analyzer
 ```
 
 2. **Install dependencies:**
-
-- You can find all dependencies in ```requirements.txt```. Install them using pip:
 
 ```bash
 pip install -r requirements.txt
@@ -40,7 +38,7 @@ pip install -r requirements.txt
 
 3. **Set up environment variables:**
 
-- Create a ```.env``` file in the project root. You can start from `.env.example` and define:
+Create a `.env` file in the project root. You can start from `.env.example` and define:
 
 ```bash
 FLASK_SECRET_KEY=your_secret_key
@@ -56,8 +54,9 @@ REPORT_CACHE_DIR=report_cache
 
 ```bash
 flask run
-The app will be available at http://127.0.0.1:5000/.
 ```
+
+The app will be available at http://127.0.0.1:5000/
 
 You can override the bind host and port when running via `python app.py`:
 
@@ -73,7 +72,7 @@ OPENAI_RPM_LIMIT=3 CHAT_CHUNK_MAX_CHARS=8000 python app.py
 
 5. **Deploy on Heroku:**
 
-- Use the ```Procfile``` provided for deployment on Heroku.
+Use the `Procfile` provided for deployment on Heroku.
 
 ```bash
 heroku create
@@ -82,17 +81,15 @@ git push heroku master
 
 ## Usage
 
-1. Uploading a WhatsApp chat log:
+1. **Uploading a WhatsApp chat log:**
+   - Browse and select a `.txt` file containing a WhatsApp chat export.
+   - Once uploaded, the chat log will be processed and analyzed.
 
-2. Browse and select a ```.txt``` file containing a WhatsApp chat export.
-Once uploaded, the chat log will be processed and analyzed.
-Download CSV:
+2. **Download CSV:**
+   - After processing the chat log, you can download the analyzed data as a CSV file.
 
-3. After processing the chat log, you can download the analyzed data as a CSV file.
-
-4. Generating Psychological Report:
-
-- You can also upload CSV/Excel files to generate psychological reports about the chat participants.
+3. **Generating Psychological Report:**
+   - You can also upload CSV/Excel files to generate psychological reports about the chat participants.
 
 ## Supported Export Formats
 
@@ -101,26 +98,22 @@ Download CSV:
 
 ## File Structure
 
-- ```app.py```: Contains the Flask server logic and routes.
-
-- ```requirements.txt```: Lists the Python dependencies required for the project.
-
-- ```Procfile```: Configuration for deploying on Heroku.
-
-- ```static/```: Contains static files such as custom CSS (style.css) and 
-JavaScript (script.js).
-
-- ```templates/```: Contains HTML templates such as index.html.
-Contributing
-
+- `app.py`: Contains the Flask server logic and routes.
+- `requirements.txt`: Lists the Python dependencies required for the project.
+- `Procfile`: Configuration for deploying on Heroku.
+- `static/`: Contains static files such as custom CSS (style.css) and JavaScript (script.js).
+- `templates/`: Contains HTML templates such as index.html.
 
 ## Contributing
 
-- Feel free to fork the project, open issues, and submit pull requests. For major changes, please open an issue first to discuss what you would like to change.
+Feel free to fork the project, open issues, and submit pull requests. For major changes, please open an issue first to discuss what you would like to change.
 
+## License
 
-Orignial Author: Onurcan Genç 
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-[Portfolio](https://onurcangenc.com.tr)
+## Authors
 
-Fixes and enhancements: [Steve Clement](https://github.com/SteveClement)
+**Original Author:** [Onurcan Genç](https://onurcangenc.com.tr)
+
+**Fixes and enhancements:** [Steve Clement](https://github.com/SteveClement)
