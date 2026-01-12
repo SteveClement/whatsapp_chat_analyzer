@@ -8,9 +8,11 @@ import matplotlib.pyplot as plt
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from collections import defaultdict
+import hashlib
 import openai
 from openai import RateLimitError, APIError
 import time
+import random
 from dotenv import load_dotenv
 from docx import Document
 import sys
@@ -24,6 +26,8 @@ sys.stdout.reconfigure(encoding='utf-8')
 load_dotenv()
 
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'fallback_secret_key')
+cache_dir = os.getenv('REPORT_CACHE_DIR', 'report_cache')
+os.makedirs(cache_dir, exist_ok=True)
 
 # Set the OpenAI API key from the environment variable
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -33,7 +37,15 @@ if not openai.api_key:
 
 
 def parse_whatsapp_chat(file):
-    message_pattern = r'\[(\d{1,2})\.(\d{1,2})\.(\d{4}),? (\d{2}:\d{2}:\d{2})\] ([^:]+): (.*)'
+    # Accept both desktop and mobile exports with flexible date/time formats.
+    desktop_pattern = (
+        r'^\[(\d{1,2})[./](\d{1,2})[./](\d{2,4}), '
+        r'(\d{1,2}:\d{2})(?::(\d{2}))?\] (.*?)(?::\s)(.*)$'
+    )
+    mobile_pattern = (
+        r'^(\d{1,2})/(\d{1,2})/(\d{2,4}), '
+        r'(\d{1,2}:\d{2})(?:\s?(AM|PM))? - (.*)$'
+    )
     chat_data = []
     current_message = None
 
@@ -42,23 +54,64 @@ def parse_whatsapp_chat(file):
         line = line.decode('utf-8').strip()
         if not line:
             continue
+        # Strip common directionality marks/BOM that may prefix exported lines.
+        line = line.lstrip('\ufeff\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069')
 
-        match = re.match(message_pattern, line)
+        date_time_obj = None
+        sender = None
+        message = None
+
+        match = re.match(desktop_pattern, line)
         if match:
             day = match.group(1)
             month = match.group(2)
             year = match.group(3)
             time_str = match.group(4)
-            sender = match.group(5)
-            message = match.group(6)
+            seconds = match.group(5) or '00'
+            sender = match.group(6)
+            message = match.group(7)
 
-            date_time_str = f'{day}.{month}.{year} {time_str}'
+            if len(year) == 2:
+                year = f"20{year}"
+
+            date_time_str = f'{day}.{month}.{year} {time_str}:{seconds}'
             try:
                 date_time_obj = datetime.strptime(date_time_str, '%d.%m.%Y %H:%M:%S')
             except ValueError as ve:
                 print(f"Date parsing error: {ve} for line: {line}")
                 continue
+        else:
+            match = re.match(mobile_pattern, line)
+            if match:
+                month = match.group(1)
+                day = match.group(2)
+                year = match.group(3)
+                time_str = match.group(4)
+                am_pm = match.group(5)
+                rest = match.group(6)
 
+                if len(year) == 2:
+                    year = f"20{year}"
+
+                if am_pm:
+                    time_str = f"{time_str} {am_pm}"
+                    time_format = '%m/%d/%Y %I:%M %p'
+                else:
+                    time_format = '%m/%d/%Y %H:%M'
+
+                date_time_str = f'{month}/{day}/{year} {time_str}'
+                try:
+                    date_time_obj = datetime.strptime(date_time_str, time_format)
+                except ValueError as ve:
+                    print(f"Date parsing error: {ve} for line: {line}")
+                    continue
+
+                sender, sep, message = rest.partition(': ')
+                if not sep:
+                    sender = 'System'
+                    message = rest
+
+        if date_time_obj is not None:
             chat_data.append({
                 'Date': date_time_obj.date(),
                 'Time': date_time_obj.time(),
@@ -240,26 +293,43 @@ def generate_psychological_report(chat_data):
     psychological states, emotions, and relationships.
     """
 
+    model_name = "gpt-4o-mini"
+    cache_key = hashlib.sha256((model_name + chat_text).encode('utf-8')).hexdigest()
+    cache_path = os.path.join(cache_dir, f"{cache_key}.txt")
+    if os.path.exists(cache_path):
+        with open(cache_path, "r", encoding="utf-8") as cached:
+            return cached.read()
+
     # Retry logic for handling rate limits
-    retry_attempts = 3  # Number of times to retry
-    retry_delay = 20  # Seconds to wait before retrying
+    retry_attempts = 5  # Number of times to retry
+    base_delay = 2  # Base delay in seconds
+    max_delay = 60  # Cap delay to avoid excessively long waits
 
     for attempt in range(retry_attempts):
         try:
             # Send request to OpenAI API
             response = openai.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model_name,
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            with open(cache_path, "w", encoding="utf-8") as cached:
+                cached.write(content)
+            return content
         
         except RateLimitError:
-            print(f"Rate limit exceeded. Retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{retry_attempts})")
-            time.sleep(retry_delay)
+            delay = min(max_delay, base_delay * (2 ** attempt))
+            jitter = random.uniform(0, 1)
+            sleep_for = delay + jitter
+            print(
+                "Rate limit exceeded. Retrying in "
+                f"{sleep_for:.2f} seconds... (Attempt {attempt + 1}/{retry_attempts})"
+            )
+            time.sleep(sleep_for)
         except APIError as e:
             return f"API error: {e}"
 
@@ -282,4 +352,6 @@ def generate_word_report(analysis_text, file_name):
     return word_file.name
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    host = os.getenv('FLASK_RUN_HOST', '127.0.0.1')
+    port = int(os.getenv('FLASK_RUN_PORT', '5000'))
+    app.run(debug=True, host=host, port=port)
