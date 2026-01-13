@@ -10,6 +10,8 @@ from openpyxl.drawing.image import Image as ExcelImage
 from collections import defaultdict
 import hashlib
 import math
+import threading
+import uuid
 import openai
 from openai import RateLimitError, APIError
 import time
@@ -36,6 +38,19 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 if not openai.api_key:
     raise ValueError("OpenAI API key not set. Please configure it in the environment variable.")
+
+report_jobs = {}
+report_jobs_lock = threading.Lock()
+
+
+def update_report_job(job_id, **updates):
+    with report_jobs_lock:
+        report_jobs.setdefault(job_id, {}).update(updates)
+
+
+def get_report_job(job_id):
+    with report_jobs_lock:
+        return report_jobs.get(job_id)
 
 
 def parse_whatsapp_chat(file):
@@ -243,33 +258,75 @@ def download():
 
     return send_file(output_file, as_attachment=True, download_name="parsed_chat_with_reply_times.xlsx")
 
+@app.route('/report_status/<job_id>', methods=['GET'])
+def report_status(job_id):
+    if session.get('report_job_id') != job_id:
+        return {"error": "Invalid job ID."}, 403
+
+    job = get_report_job(job_id)
+    if not job:
+        return {"error": "Job not found."}, 404
+
+    if job.get('status') == 'done' and job.get('report_file'):
+        session['report_file'] = job['report_file']
+
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "message": job.get("message", "")
+    }
+
+@app.route('/report_status_page/<job_id>', methods=['GET'])
+def report_status_page(job_id):
+    if session.get('report_job_id') != job_id:
+        flash("Invalid report job.", "error")
+        return redirect(url_for('index'))
+    return render_template('report_status.html', job_id=job_id)
+
 # Route for processing CSV/Excel files and generating the psychological report
 @app.route('/upload_csv', methods=['POST'])
 def upload_csv():
     file = request.files.get('file_csv')
     if file and (file.filename.endswith('.csv') or file.filename.endswith('.xlsx')):
-        # Load the uploaded CSV or Excel file into a DataFrame
-        if file.filename.endswith('.csv'):
-            df = pd.read_csv(file)
-        else:
-            df = pd.read_excel(file)
+        suffix = '.csv' if file.filename.endswith('.csv') else '.xlsx'
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        file.save(temp_file.name)
 
-        # Check if the file is empty
-        if df.empty:
-            flash("Uploaded file is empty. Please check the file and try again.", 'error')
-            return redirect(url_for('index'))
+        job_id = uuid.uuid4().hex
+        session['report_job_id'] = job_id
+        update_report_job(job_id, status='queued', message='Queued for processing.')
 
-        # Generate the psychological analysis report
-        psychological_analysis = generate_psychological_report(df)
+        def process_report():
+            update_report_job(job_id, status='running', message='Generating report...')
+            try:
+                if suffix == '.csv':
+                    df = pd.read_csv(temp_file.name)
+                else:
+                    df = pd.read_excel(temp_file.name)
+                if df.empty:
+                    update_report_job(job_id, status='error', message='Uploaded file is empty.')
+                    return
+                psychological_analysis = generate_psychological_report(df)
+                if psychological_analysis.startswith("Error:"):
+                    update_report_job(job_id, status='error', message=psychological_analysis)
+                    return
+                report_path = generate_word_report(psychological_analysis, "psychological_report.docx")
+                update_report_job(
+                    job_id,
+                    status='done',
+                    message='Report ready.',
+                    report_file=report_path
+                )
+            finally:
+                try:
+                    os.remove(temp_file.name)
+                except OSError:
+                    pass
 
-        # Generate a Word document with the analysis
-        report_path = generate_word_report(psychological_analysis, "psychological_report.docx")
+        worker = threading.Thread(target=process_report, daemon=True)
+        worker.start()
 
-        # Store the report path for download
-        session['report_file'] = report_path
-
-        flash("Psychological analysis report generated successfully.", "success")
-        return redirect(url_for('index'))
+        return redirect(url_for('report_status_page', job_id=job_id))
 
     flash("Invalid file format. Please upload a CSV or Excel file.", 'error')
     return redirect(url_for('index'))
