@@ -33,6 +33,9 @@ cd whatsapp_chat_analyzer
 2. **Install dependencies:**
 
 ```bash
+python3 -m venv venv
+source ./venv/bin/activate
+pip install -U setuptools pip
 pip install -r requirements.txt
 ```
 
@@ -87,7 +90,7 @@ git push heroku master
    - Once uploaded, the chat log will be processed and analyzed.
 
 2. **Download CSV:**
-   - After processing the chat log, you can download the analyzed data as a CSV file.
+   - After processing the chat log, you can download the analyzed data as an .xlsx file.
 
 3. **Generating Psychological Report:**
    - You can also upload CSV/Excel files to generate psychological reports about the chat participants.
@@ -96,6 +99,23 @@ git push heroku master
 
 - Desktop export: `[dd/mm/yyyy, HH:MM:SS] Sender: message` (also accepts `dd.mm.yyyy`).
 - Mobile export: `m/d/yy, HH:MM - Sender: message` (system lines without a sender are supported).
+
+## CSV/Excel Input Format
+
+The psychological report uploader expects a tabular file with these columns:
+
+- `Date` (date or ISO string)
+- `Time` (time string)
+- `Datetime` (combined timestamp; can be blank if `Date` + `Time` are present)
+- `Sender` (participant name/number)
+- `Message` (text body)
+
+Example row:
+
+```
+Date,Time,Datetime,Sender,Message
+2025-10-05,14:24:30,2025-10-05 14:24:30,Steve Clement,"Hi lovely people"
+```
 
 ## File Structure
 
