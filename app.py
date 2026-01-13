@@ -33,6 +33,17 @@ app.secret_key = os.getenv('FLASK_SECRET_KEY', 'fallback_secret_key')
 cache_dir = os.getenv('REPORT_CACHE_DIR', 'report_cache')
 os.makedirs(cache_dir, exist_ok=True)
 openai_last_request_ts = 0.0
+PROMPT_TEMPLATE = (
+    "You will receive a WhatsApp chat snippet (part {part}/{total_parts}). "
+    "Act as an Industrial/Organizational Psychology expert with a specialization in Human "
+    "Resource Management and Management. Analyze the chat data and generate a psychological "
+    "analysis report covering emotions, relationships, psychological conditions, and "
+    "communication patterns.\n\n"
+    "WhatsApp Chat Data:\n"
+    "{chat_text}\n\n"
+    "Provide a comprehensive analysis of the individuals' psychological states, emotions, "
+    "and relationships."
+)
 
 # Set the OpenAI API key from the environment variable
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -247,7 +258,12 @@ def index():
             flash("File processed successfully.", "success")
             return redirect(url_for('index'))
 
-    return render_template('index.html')
+    prompt_preview = PROMPT_TEMPLATE.format(
+        part=1,
+        total_parts=1,
+        chat_text="{chat_text}"
+    )
+    return render_template('index.html', prompt_preview=prompt_preview)
 
 @app.route('/download_report', methods=['GET'])
 def download_report():
@@ -561,19 +577,11 @@ def generate_psychological_report(chat_data, progress_cb=None, use_cache=True):
     metadata_section = build_report_metadata(chat_data)
 
     if total_parts == 1:
-        prompt = f"""
-        You will receive a WhatsApp chat snippet (part 1/1). Treat this as the full content.
-        Act as an Industrial/Organizational Psychology expert with a specialization in Human
-        Resource Management and Management. Analyze the chat data and generate a psychological
-        analysis report covering emotions, relationships, psychological conditions, and
-        communication patterns.
-
-        WhatsApp Chat Data:
-        {chunks[0]}
-
-        Provide a comprehensive analysis of the individuals' psychological states, emotions,
-        and relationships.
-        """
+        prompt = PROMPT_TEMPLATE.format(
+            part=1,
+            total_parts=1,
+            chat_text=chunks[0]
+        )
         if progress_cb:
             progress_cb(stage='chunks', chunk_total=1, chunk_current=1)
         content = call_openai_with_backoff(
@@ -595,16 +603,15 @@ def generate_psychological_report(chat_data, progress_cb=None, use_cache=True):
         if progress_cb:
             progress_cb(stage='chunks', chunk_total=total_parts, chunk_current=idx)
         print(f"Submitting chunk {idx}/{total_parts} to OpenAI.")
-        prompt = f"""
-        You will receive a WhatsApp chat snippet (part {idx}/{total_parts}).
-        Act as an Industrial/Organizational Psychology expert with a specialization in Human
-        Resource Management and Management. Summarize key psychological signals, emotions,
-        relationships, and communication patterns found in this snippet. Return a concise
-        bullet list of findings and notable quotes with speaker names.
-
-        WhatsApp Chat Data:
-        {chunk}
-        """
+        prompt = (
+            "You will receive a WhatsApp chat snippet (part {part}/{total_parts}). "
+            "Act as an Industrial/Organizational Psychology expert with a specialization in Human "
+            "Resource Management and Management. Summarize key psychological signals, emotions, "
+            "relationships, and communication patterns found in this snippet. Return a concise "
+            "bullet list of findings and notable quotes with speaker names.\n\n"
+            "WhatsApp Chat Data:\n"
+            "{chat_text}"
+        ).format(part=idx, total_parts=total_parts, chat_text=chunk)
         summary = call_openai_with_backoff(
             prompt,
             model_name,
