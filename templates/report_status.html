@@ -21,6 +21,9 @@
                 <a id="html-link" class="btn btn-default" href="{{ url_for('report_html', job_id=job_id) }}" style="display:none;">
                     View HTML Report
                 </a>
+                <a id="regen-link" class="btn btn-warning" href="{{ url_for('report_regenerate', job_id=job_id) }}" style="display:none;">
+                    Regenerate Report
+                </a>
                 <a class="btn btn-primary" href="{{ url_for('index') }}" id="back-home">Back to Home</a>
             </div>
         </div>
@@ -33,6 +36,7 @@
         const downloadLink = document.getElementById("download-link");
         const statusProgress = document.getElementById("status-progress");
         const htmlLink = document.getElementById("html-link");
+        const regenLink = document.getElementById("regen-link");
 
         let currentStatus = "unknown";
 
@@ -55,6 +59,11 @@
                 if (data.status === "done") {
                     downloadLink.style.display = "inline-block";
                     htmlLink.style.display = "inline-block";
+                    if (data.cached) {
+                        regenLink.style.display = "inline-block";
+                    } else {
+                        regenLink.style.display = "none";
+                    }
                 }
                 if (data.status === "error") {
                     statusLine.textContent = "Status: error";
@@ -73,6 +82,13 @@
                 if (!ok) {
                     event.preventDefault();
                 }
+            }
+        });
+
+        regenLink.addEventListener("click", (event) => {
+            const ok = window.confirm("Regenerate the report without using cache?");
+            if (!ok) {
+                event.preventDefault();
             }
         });
     </script>

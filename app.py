@@ -54,6 +54,60 @@ def get_report_job(job_id):
         return report_jobs.get(job_id)
 
 
+def start_report_job(input_path, suffix, use_cache=True, job_id=None):
+    if job_id is None:
+        job_id = uuid.uuid4().hex
+    session['report_job_id'] = job_id
+    report_ids = session.get('report_job_ids', [])
+    report_ids.append(job_id)
+    session['report_job_ids'] = report_ids
+    update_report_job(
+        job_id,
+        status='queued',
+        message='Queued for processing.',
+        input_file=input_path,
+        cached=False
+    )
+
+    def process_report():
+        update_report_job(job_id, status='running', message='Generating report...')
+        def progress_cb(**updates):
+            update_report_job(job_id, **updates)
+        try:
+            if suffix == '.csv':
+                df = pd.read_csv(input_path)
+            else:
+                df = pd.read_excel(input_path)
+            if df.empty:
+                update_report_job(job_id, status='error', message='Uploaded file is empty.')
+                return
+            psychological_analysis, from_cache = generate_psychological_report(
+                df,
+                progress_cb=progress_cb,
+                use_cache=use_cache
+            )
+            if psychological_analysis.startswith("Error:"):
+                update_report_job(job_id, status='error', message=psychological_analysis)
+                return
+            report_path = generate_word_report(psychological_analysis, "psychological_report.docx")
+            html_path = generate_html_report(psychological_analysis, "psychological_report.html")
+            message = 'Report ready (from cache).' if from_cache else 'Report ready.'
+            update_report_job(
+                job_id,
+                status='done',
+                message=message,
+                report_file=report_path,
+                html_file=html_path,
+                cached=from_cache
+            )
+        except Exception as exc:
+            update_report_job(job_id, status='error', message=f"Error: {exc}")
+
+    worker = threading.Thread(target=process_report, daemon=True)
+    worker.start()
+    return job_id
+
+
 def parse_whatsapp_chat(file):
     # Accept both desktop and mobile exports with flexible date/time formats.
     desktop_pattern = (
@@ -277,7 +331,8 @@ def report_status(job_id):
         "message": job.get("message", ""),
         "stage": job.get("stage"),
         "chunk_current": job.get("chunk_current"),
-        "chunk_total": job.get("chunk_total")
+        "chunk_total": job.get("chunk_total"),
+        "cached": job.get("cached", False)
     }
 
 @app.route('/report_status_page/<job_id>', methods=['GET'])
@@ -287,56 +342,33 @@ def report_status_page(job_id):
         return redirect(url_for('index'))
     return render_template('report_status.html', job_id=job_id)
 
+@app.route('/report_regenerate/<job_id>', methods=['GET'])
+def report_regenerate(job_id):
+    if session.get('report_job_id') != job_id and job_id not in session.get('report_job_ids', []):
+        flash("Invalid report job.", "error")
+        return redirect(url_for('index'))
+    job = get_report_job(job_id)
+    if not job or not job.get('input_file'):
+        flash("No source file available for regeneration.", "error")
+        return redirect(url_for('index'))
+    input_path = job['input_file']
+    if not os.path.exists(input_path):
+        flash("Source file no longer exists.", "error")
+        return redirect(url_for('index'))
+    suffix = os.path.splitext(input_path)[1].lower()
+    new_job_id = start_report_job(input_path, suffix, use_cache=False)
+    return redirect(url_for('report_status_page', job_id=new_job_id))
+
 # Route for processing CSV/Excel files and generating the psychological report
 @app.route('/upload_csv', methods=['POST'])
 def upload_csv():
     file = request.files.get('file_csv')
     if file and (file.filename.endswith('.csv') or file.filename.endswith('.xlsx')):
         suffix = '.csv' if file.filename.endswith('.csv') else '.xlsx'
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        file.save(temp_file.name)
-
         job_id = uuid.uuid4().hex
-        session['report_job_id'] = job_id
-        report_ids = session.get('report_job_ids', [])
-        report_ids.append(job_id)
-        session['report_job_ids'] = report_ids
-        update_report_job(job_id, status='queued', message='Queued for processing.')
-
-        def process_report():
-            update_report_job(job_id, status='running', message='Generating report...')
-            def progress_cb(**updates):
-                update_report_job(job_id, **updates)
-            try:
-                if suffix == '.csv':
-                    df = pd.read_csv(temp_file.name)
-                else:
-                    df = pd.read_excel(temp_file.name)
-                if df.empty:
-                    update_report_job(job_id, status='error', message='Uploaded file is empty.')
-                    return
-                psychological_analysis = generate_psychological_report(df, progress_cb=progress_cb)
-                if psychological_analysis.startswith("Error:"):
-                    update_report_job(job_id, status='error', message=psychological_analysis)
-                    return
-                report_path = generate_word_report(psychological_analysis, "psychological_report.docx")
-                html_path = generate_html_report(psychological_analysis, "psychological_report.html")
-                update_report_job(
-                    job_id,
-                    status='done',
-                    message='Report ready.',
-                    report_file=report_path,
-                    html_file=html_path
-                )
-            finally:
-                try:
-                    os.remove(temp_file.name)
-                except OSError:
-                    pass
-
-        worker = threading.Thread(target=process_report, daemon=True)
-        worker.start()
-
+        input_path = os.path.join(cache_dir, f"report_input_{job_id}{suffix}")
+        file.save(input_path)
+        start_report_job(input_path, suffix, use_cache=True, job_id=job_id)
         return redirect(url_for('report_status_page', job_id=job_id))
 
     flash("Invalid file format. Please upload a CSV or Excel file.", 'error')
@@ -436,7 +468,10 @@ def build_report_metadata(chat_data):
 
     peak_hour = None
     if 'Time' in df.columns and not df['Time'].isna().all():
-        time_series = pd.to_datetime(df['Time'].astype(str), errors='coerce')
+        time_values = df['Time'].astype(str).str.strip()
+        time_series = pd.to_datetime(time_values, format='%H:%M:%S', errors='coerce')
+        if time_series.isna().all():
+            time_series = pd.to_datetime(time_values, format='%H:%M', errors='coerce')
         hour_counts = time_series.dt.hour.value_counts().sort_index()
         if not hour_counts.empty:
             peak_hour = (int(hour_counts.idxmax()), int(hour_counts.max()))
@@ -473,7 +508,7 @@ def build_report_metadata(chat_data):
     return "\n".join(lines)
 
 
-def generate_psychological_report(chat_data, progress_cb=None):
+def generate_psychological_report(chat_data, progress_cb=None, use_cache=True):
     # Convert the chat data to a readable format
     chat_text = ""
     for index, row in chat_data.iterrows():
@@ -488,9 +523,12 @@ def generate_psychological_report(chat_data, progress_cb=None):
     cache_key_input = f"{model_name}:{chunk_max_chars}:{chat_text}"
     cache_key = hashlib.sha256(cache_key_input.encode('utf-8')).hexdigest()
     cache_path = os.path.join(cache_dir, f"{cache_key}.txt")
-    if os.path.exists(cache_path):
+    if use_cache and os.path.exists(cache_path):
         with open(cache_path, "r", encoding="utf-8") as cached:
-            return cached.read()
+            cached_text = cached.read()
+        if progress_cb:
+            progress_cb(stage='cache', cached=True, message='Loaded from cache.')
+        return cached_text, True
 
     lines = chat_text.splitlines()
     if max_chunks > 0:
@@ -545,12 +583,12 @@ def generate_psychological_report(chat_data, progress_cb=None):
             rpm_limit
         )
         if content is None:
-            return "Error: Rate limit exceeded after multiple attempts. Please try again later."
+            return "Error: Rate limit exceeded after multiple attempts. Please try again later.", False
         if metadata_section:
             content = f"{metadata_section}\n\n{content}"
         with open(cache_path, "w", encoding="utf-8") as cached:
             cached.write(content)
-        return content
+        return content, False
 
     partial_summaries = []
     for idx, chunk in enumerate(chunks, start=1):
@@ -574,7 +612,7 @@ def generate_psychological_report(chat_data, progress_cb=None):
             rpm_limit
         )
         if summary is None:
-            return "Error: Rate limit exceeded after multiple attempts. Please try again later."
+            return "Error: Rate limit exceeded after multiple attempts. Please try again later.", False
         partial_summaries.append(summary)
 
     if progress_cb:
@@ -596,12 +634,12 @@ def generate_psychological_report(chat_data, progress_cb=None):
         rpm_limit
     )
     if content is None:
-        return "Error: Rate limit exceeded after multiple attempts. Please try again later."
+        return "Error: Rate limit exceeded after multiple attempts. Please try again later.", False
     if metadata_section:
         content = f"{metadata_section}\n\n{content}"
     with open(cache_path, "w", encoding="utf-8") as cached:
         cached.write(content)
-    return content
+    return content, False
 
 
 def generate_word_report(analysis_text, file_name):
@@ -742,19 +780,21 @@ def generate_html_report(analysis_text, file_name):
     while i < len(lines):
         raw_line = lines[i]
         line = raw_line.rstrip()
+        check_line = line.lstrip()
         if not line:
             body_parts.append("<p></p>")
             i += 1
             continue
-        if line.startswith('|') and i + 1 < len(lines) and is_table_separator(lines[i + 1]):
-            header = parse_table_row(line)
+        if check_line.startswith('|') and i + 1 < len(lines) and is_table_separator(lines[i + 1].lstrip()):
+            header = parse_table_row(check_line)
             i += 2
             body_rows = []
             while i < len(lines):
                 body_line = lines[i].rstrip()
-                if not body_line or not body_line.strip().startswith('|'):
+                body_check = body_line.lstrip()
+                if not body_line or not body_check.startswith('|'):
                     break
-                body_rows.append(parse_table_row(body_line))
+                body_rows.append(parse_table_row(body_check))
                 i += 1
             body_parts.append("<table class=\"report-table\">")
             body_parts.append("<thead><tr>")
@@ -768,24 +808,27 @@ def generate_html_report(analysis_text, file_name):
                 body_parts.append("</tr>")
             body_parts.append("</tbody></table>")
             continue
-        if line.startswith('#'):
-            level = len(line) - len(line.lstrip('#'))
-            heading_text = line[level:].strip()
+        if check_line.startswith('#'):
+            level = len(check_line) - len(check_line.lstrip('#'))
+            heading_text = check_line[level:].strip()
             level = max(1, min(level, 4))
             body_parts.append(f"<h{level}>{add_inline_md(heading_text)}</h{level}>")
             i += 1
             continue
-        if line.startswith(('- ', '* ')):
+        if check_line.startswith(('- ', '* ')):
             items = []
-            while i < len(lines) and lines[i].startswith(('- ', '* ')):
-                items.append(lines[i][2:].strip())
+            while i < len(lines):
+                item_line = lines[i].lstrip()
+                if not item_line.startswith(('- ', '* ')):
+                    break
+                items.append(item_line[2:].strip())
                 i += 1
             body_parts.append("<ul>")
             for item in items:
                 body_parts.append(f"<li>{add_inline_md(item)}</li>")
             body_parts.append("</ul>")
             continue
-        body_parts.append(f"<p>{add_inline_md(line)}</p>")
+        body_parts.append(f"<p>{add_inline_md(check_line)}</p>")
         i += 1
 
     body_parts.append("</div>")
