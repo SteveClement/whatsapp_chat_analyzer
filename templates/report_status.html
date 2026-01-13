@@ -21,7 +21,7 @@
                 <a id="html-link" class="btn btn-default" href="{{ url_for('report_html', job_id=job_id) }}" style="display:none;">
                     View HTML Report
                 </a>
-                <a class="btn btn-primary" href="{{ url_for('index') }}">Back to Home</a>
+                <a class="btn btn-primary" href="{{ url_for('index') }}" id="back-home">Back to Home</a>
             </div>
         </div>
     </div>
@@ -34,6 +34,8 @@
         const statusProgress = document.getElementById("status-progress");
         const htmlLink = document.getElementById("html-link");
 
+        let currentStatus = "unknown";
+
         async function pollStatus() {
             try {
                 const response = await fetch(`/report_status/${jobId}`);
@@ -44,6 +46,7 @@
                 const data = await response.json();
                 statusLine.textContent = `Status: ${data.status}`;
                 statusMessage.textContent = data.message || "";
+                currentStatus = data.status || "unknown";
                 if (data.chunk_total && data.chunk_current) {
                     statusProgress.textContent = `Chunks: ${data.chunk_current}/${data.chunk_total}`;
                 } else {
@@ -63,6 +66,15 @@
 
         pollStatus();
         setInterval(pollStatus, 5000);
+
+        document.getElementById("back-home").addEventListener("click", (event) => {
+            if (currentStatus !== "done") {
+                const ok = window.confirm("The report is still processing. Leave this page?");
+                if (!ok) {
+                    event.preventDefault();
+                }
+            }
+        });
     </script>
 </body>
 </html>

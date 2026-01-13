@@ -155,7 +155,7 @@ def index():
 
             # Check if parsed_chat is empty
             if parsed_chat.empty:
-                flash("Parsed chat is empty. Please check the chat format and try again.", 'error')
+                flash("No messages were parsed. Check the chat export format and try again.", 'error')
                 return redirect(url_for('index'))
 
             # Calculate average reply times for each sender

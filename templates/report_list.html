@@ -17,8 +17,8 @@
                     {% for report in reports %}
                     <li class="list-group-item">
                         <span>Report {{ loop.index }}</span>
-                        <a class="btn btn-success btn-xs" href="{{ url_for('report_docx', job_id=report.job_id) }}">Download DOCX</a>
-                        <a class="btn btn-default btn-xs" href="{{ url_for('report_html', job_id=report.job_id) }}">View HTML</a>
+                        <a class="btn btn-success btn-xs" href="{{ url_for('report_docx', job_id=report.job_id) }}" target="_blank" rel="noopener">Download DOCX</a>
+                        <a class="btn btn-default btn-xs" href="{{ url_for('report_html', job_id=report.job_id) }}" target="_blank" rel="noopener">View HTML</a>
                     </li>
                     {% endfor %}
                 </ul>

@@ -98,6 +98,13 @@ h4>strong {
     margin-top: 20px;
 }
 
+.alert-danger {
+    background-color: #ffe3e3;
+    border-color: #f5a3a3;
+    color: #7a1f1f;
+    font-weight: 600;
+}
+
 /* Image upload success and stop icons */
 .imgupload.ok, .csvupload.ok {
     display: none;
