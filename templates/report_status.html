@@ -18,6 +18,9 @@
                 <a id="download-link" class="btn btn-success" href="{{ url_for('download_psychological_report') }}" style="display:none;">
                     Download Psychological Report
                 </a>
+                <a id="html-link" class="btn btn-default" href="{{ url_for('report_html', job_id=job_id) }}" style="display:none;">
+                    View HTML Report
+                </a>
                 <a class="btn btn-primary" href="{{ url_for('index') }}">Back to Home</a>
             </div>
         </div>
@@ -29,6 +32,7 @@
         const statusMessage = document.getElementById("status-message");
         const downloadLink = document.getElementById("download-link");
         const statusProgress = document.getElementById("status-progress");
+        const htmlLink = document.getElementById("html-link");
 
         async function pollStatus() {
             try {
@@ -47,6 +51,7 @@
                 }
                 if (data.status === "done") {
                     downloadLink.style.display = "inline-block";
+                    htmlLink.style.display = "inline-block";
                 }
                 if (data.status === "error") {
                     statusLine.textContent = "Status: error";

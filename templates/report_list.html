@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reports</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container center">
+        <div class="row">
+            <div class="col-md-12 text-center">
+                <h1 class="white">Generated Reports</h1>
+                {% if reports %}
+                <ul class="list-group">
+                    {% for report in reports %}
+                    <li class="list-group-item">
+                        <span>Report {{ loop.index }}</span>
+                        <a class="btn btn-success btn-xs" href="{{ url_for('report_docx', job_id=report.job_id) }}">Download DOCX</a>
+                        <a class="btn btn-default btn-xs" href="{{ url_for('report_html', job_id=report.job_id) }}">View HTML</a>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="white">No reports available yet.</p>
+                {% endif %}
+                <a class="btn btn-primary" href="{{ url_for('index') }}">Back to Home</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -12,6 +12,7 @@ import hashlib
 import math
 import threading
 import uuid
+import html
 import openai
 from openai import RateLimitError, APIError
 import time
@@ -297,6 +298,9 @@ def upload_csv():
 
         job_id = uuid.uuid4().hex
         session['report_job_id'] = job_id
+        report_ids = session.get('report_job_ids', [])
+        report_ids.append(job_id)
+        session['report_job_ids'] = report_ids
         update_report_job(job_id, status='queued', message='Queued for processing.')
 
         def process_report():
@@ -316,11 +320,13 @@ def upload_csv():
                     update_report_job(job_id, status='error', message=psychological_analysis)
                     return
                 report_path = generate_word_report(psychological_analysis, "psychological_report.docx")
+                html_path = generate_html_report(psychological_analysis, "psychological_report.html")
                 update_report_job(
                     job_id,
                     status='done',
                     message='Report ready.',
-                    report_file=report_path
+                    report_file=report_path,
+                    html_file=html_path
                 )
             finally:
                 try:
@@ -695,6 +701,173 @@ def generate_word_report(analysis_text, file_name):
     doc.save(word_file.name)
 
     return word_file.name
+
+
+def generate_html_report(analysis_text, file_name):
+    def escape_text(text):
+        return html.escape(text, quote=True)
+
+    def add_inline_md(text):
+        token_pattern = r'(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)'
+        parts = re.split(token_pattern, text)
+        rendered = []
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith('**') and part.endswith('**'):
+                rendered.append(f"<strong>{escape_text(part[2:-2])}</strong>")
+            elif part.startswith('*') and part.endswith('*'):
+                rendered.append(f"<em>{escape_text(part[1:-1])}</em>")
+            elif part.startswith('`') and part.endswith('`'):
+                rendered.append(f"<code>{escape_text(part[1:-1])}</code>")
+            else:
+                rendered.append(escape_text(part))
+        return "".join(rendered)
+
+    def is_table_separator(line):
+        stripped = line.strip()
+        if not stripped.startswith('|') or not stripped.endswith('|'):
+            return False
+        cells = [cell.strip() for cell in stripped.strip('|').split('|')]
+        if not cells:
+            return False
+        return all(cell and set(cell) <= {'-'} for cell in cells)
+
+    def parse_table_row(line):
+        return [cell.strip() for cell in line.strip().strip('|').split('|')]
+
+    lines = analysis_text.splitlines()
+    body_parts = ["<div class=\"report\">"]
+    i = 0
+    while i < len(lines):
+        raw_line = lines[i]
+        line = raw_line.rstrip()
+        if not line:
+            body_parts.append("<p></p>")
+            i += 1
+            continue
+        if line.startswith('|') and i + 1 < len(lines) and is_table_separator(lines[i + 1]):
+            header = parse_table_row(line)
+            i += 2
+            body_rows = []
+            while i < len(lines):
+                body_line = lines[i].rstrip()
+                if not body_line or not body_line.strip().startswith('|'):
+                    break
+                body_rows.append(parse_table_row(body_line))
+                i += 1
+            body_parts.append("<table class=\"report-table\">")
+            body_parts.append("<thead><tr>")
+            for cell in header:
+                body_parts.append(f"<th>{add_inline_md(cell)}</th>")
+            body_parts.append("</tr></thead><tbody>")
+            for row in body_rows:
+                body_parts.append("<tr>")
+                for cell in row:
+                    body_parts.append(f"<td>{add_inline_md(cell)}</td>")
+                body_parts.append("</tr>")
+            body_parts.append("</tbody></table>")
+            continue
+        if line.startswith('#'):
+            level = len(line) - len(line.lstrip('#'))
+            heading_text = line[level:].strip()
+            level = max(1, min(level, 4))
+            body_parts.append(f"<h{level}>{add_inline_md(heading_text)}</h{level}>")
+            i += 1
+            continue
+        if line.startswith(('- ', '* ')):
+            items = []
+            while i < len(lines) and lines[i].startswith(('- ', '* ')):
+                items.append(lines[i][2:].strip())
+                i += 1
+            body_parts.append("<ul>")
+            for item in items:
+                body_parts.append(f"<li>{add_inline_md(item)}</li>")
+            body_parts.append("</ul>")
+            continue
+        body_parts.append(f"<p>{add_inline_md(line)}</p>")
+        i += 1
+
+    body_parts.append("</div>")
+    html_doc = "\n".join([
+        "<!DOCTYPE html>",
+        "<html lang=\"en\">",
+        "<head>",
+        "<meta charset=\"UTF-8\">",
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">",
+        "<title>Psychological Report</title>",
+        "<style>",
+        "body{font-family:Arial, sans-serif; margin:24px; color:#111;}",
+        ".report-table{border-collapse:collapse; width:100%; margin:16px 0;}",
+        ".report-table th,.report-table td{border:1px solid #ccc; padding:8px;}",
+        ".report-table th{background:#f2f2f2; text-align:left;}",
+        "code{background:#f6f6f6; padding:2px 4px; border-radius:4px;}",
+        "</style>",
+        "</head>",
+        "<body>",
+        "\n".join(body_parts),
+        "</body>",
+        "</html>"
+    ])
+
+    html_file = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
+    with open(html_file.name, "w", encoding="utf-8") as handle:
+        handle.write(html_doc)
+    return html_file.name
+
+
+@app.route('/reports', methods=['GET'])
+def report_list():
+    job_ids = session.get('report_job_ids', [])
+    reports = []
+    for job_id in job_ids:
+        job = get_report_job(job_id)
+        if not job or job.get('status') != 'done':
+            continue
+        report_file = job.get('report_file')
+        html_file = job.get('html_file')
+        if report_file and os.path.exists(report_file):
+            reports.append({
+                "job_id": job_id,
+                "report_file": report_file,
+                "html_file": html_file
+            })
+    return render_template('report_list.html', reports=reports)
+
+
+@app.route('/report_html/<job_id>', methods=['GET'])
+def report_html(job_id):
+    if session.get('report_job_id') != job_id and job_id not in session.get('report_job_ids', []):
+        flash("Invalid report job.", "error")
+        return redirect(url_for('index'))
+    job = get_report_job(job_id)
+    if not job or not job.get('html_file') or not os.path.exists(job['html_file']):
+        flash("No HTML report available.", "error")
+        return redirect(url_for('index'))
+    return send_file(job['html_file'])
+
+@app.route('/report_docx/<job_id>', methods=['GET'])
+def report_docx(job_id):
+    if session.get('report_job_id') != job_id and job_id not in session.get('report_job_ids', []):
+        flash("Invalid report job.", "error")
+        return redirect(url_for('index'))
+    job = get_report_job(job_id)
+    if not job or not job.get('report_file') or not os.path.exists(job['report_file']):
+        flash("No report available.", "error")
+        return redirect(url_for('index'))
+
+    report_file = job['report_file']
+
+    @after_this_request
+    def remove_report_file(response):
+        try:
+            os.remove(report_file)
+            job['report_file'] = None
+        except Exception as e:
+            print(f"Error deleting file: {str(e)}")
+        return response
+
+    return send_file(report_file, as_attachment=True, download_name="psychological_analysis_report.docx")
 
 if __name__ == '__main__':
     host = os.getenv('FLASK_RUN_HOST', '127.0.0.1')
