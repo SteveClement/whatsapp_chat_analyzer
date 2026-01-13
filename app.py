@@ -273,7 +273,10 @@ def report_status(job_id):
     return {
         "job_id": job_id,
         "status": job.get("status"),
-        "message": job.get("message", "")
+        "message": job.get("message", ""),
+        "stage": job.get("stage"),
+        "chunk_current": job.get("chunk_current"),
+        "chunk_total": job.get("chunk_total")
     }
 
 @app.route('/report_status_page/<job_id>', methods=['GET'])
@@ -298,6 +301,8 @@ def upload_csv():
 
         def process_report():
             update_report_job(job_id, status='running', message='Generating report...')
+            def progress_cb(**updates):
+                update_report_job(job_id, **updates)
             try:
                 if suffix == '.csv':
                     df = pd.read_csv(temp_file.name)
@@ -306,7 +311,7 @@ def upload_csv():
                 if df.empty:
                     update_report_job(job_id, status='error', message='Uploaded file is empty.')
                     return
-                psychological_analysis = generate_psychological_report(df)
+                psychological_analysis = generate_psychological_report(df, progress_cb=progress_cb)
                 if psychological_analysis.startswith("Error:"):
                     update_report_job(job_id, status='error', message=psychological_analysis)
                     return
@@ -374,7 +379,95 @@ def call_openai_with_backoff(prompt, model_name, min_request_interval, rpm_limit
     return None
 
 
-def generate_psychological_report(chat_data):
+def build_report_metadata(chat_data):
+    if chat_data is None or chat_data.empty:
+        return ""
+
+    df = chat_data.copy()
+    if 'Datetime' in df.columns:
+        dt_series = pd.to_datetime(df['Datetime'], errors='coerce')
+    elif 'Date' in df.columns and 'Time' in df.columns:
+        dt_series = pd.to_datetime(
+            df['Date'].astype(str) + ' ' + df['Time'].astype(str),
+            errors='coerce'
+        )
+    elif 'Date' in df.columns:
+        dt_series = pd.to_datetime(df['Date'], errors='coerce')
+    else:
+        dt_series = pd.Series([pd.NaT] * len(df))
+
+    valid_dates = dt_series.dropna().sort_values()
+    first_dt = valid_dates.min() if not valid_dates.empty else None
+    last_dt = valid_dates.max() if not valid_dates.empty else None
+
+    total_messages = len(df)
+    participants = df['Sender'].dropna().astype(str) if 'Sender' in df.columns else pd.Series([], dtype=str)
+    participant_count = participants.nunique() if not participants.empty else 0
+    top_participants = participants.value_counts().head(3)
+
+    span_days = None
+    if first_dt is not None and last_dt is not None:
+        span_days = (last_dt - first_dt).days + 1
+
+    longest_gap_hours = None
+    if len(valid_dates) > 1:
+        gaps = valid_dates.diff().dropna()
+        longest_gap = gaps.max()
+        longest_gap_hours = longest_gap.total_seconds() / 3600.0
+
+    busiest_day = None
+    if 'Date' in df.columns and not df['Date'].isna().all():
+        day_counts = df['Date'].astype(str).value_counts()
+        if not day_counts.empty:
+            busiest_day = (day_counts.index[0], int(day_counts.iloc[0]))
+
+    avg_messages_per_participant = None
+    top_participant_share = None
+    if participant_count > 0:
+        avg_messages_per_participant = total_messages / participant_count
+        if not top_participants.empty:
+            top_participant_share = (top_participants.iloc[0] / total_messages) * 100
+
+    peak_hour = None
+    if 'Time' in df.columns and not df['Time'].isna().all():
+        time_series = pd.to_datetime(df['Time'].astype(str), errors='coerce')
+        hour_counts = time_series.dt.hour.value_counts().sort_index()
+        if not hour_counts.empty:
+            peak_hour = (int(hour_counts.idxmax()), int(hour_counts.max()))
+
+    rows = []
+    if first_dt is not None:
+        rows.append(("First message", first_dt.strftime('%Y-%m-%d %H:%M')))
+    if last_dt is not None:
+        rows.append(("Last message", last_dt.strftime('%Y-%m-%d %H:%M')))
+    rows.append(("Total messages", f"{total_messages}"))
+    rows.append(("Participants", f"{participant_count}"))
+    if span_days is not None and span_days > 0:
+        rows.append(("Time span (days)", f"{span_days}"))
+        rows.append(("Messages per day", f"{total_messages / span_days:.1f}"))
+    if longest_gap_hours is not None:
+        rows.append(("Longest gap (hours)", f"{longest_gap_hours:.1f}"))
+    if busiest_day is not None:
+        rows.append(("Busiest day", f"{busiest_day[0]} ({busiest_day[1]} messages)"))
+    if avg_messages_per_participant is not None:
+        rows.append(("Avg messages per participant", f"{avg_messages_per_participant:.1f}"))
+    if top_participant_share is not None and not top_participants.empty:
+        top_name = str(top_participants.index[0])
+        rows.append(("Most active participant", f"{top_name} ({top_participant_share:.1f}%)"))
+    if peak_hour is not None:
+        rows.append(("Peak hour of day", f"{peak_hour[0]:02d}:00 ({peak_hour[1]} messages)"))
+    if not top_participants.empty:
+        top_items = ", ".join(f"{name} ({count})" for name, count in top_participants.items())
+        rows.append(("Top participants", top_items))
+
+    lines = ["## Report Metadata", "| Metric | Value |", "| --- | --- |"]
+    for metric, value in rows:
+        lines.append(f"| {metric} | {value} |")
+
+    return "\n".join(lines)
+
+
+def generate_psychological_report(chat_data, progress_cb=None):
     # Convert the chat data to a readable format
     chat_text = ""
     for index, row in chat_data.iterrows():
@@ -413,11 +506,15 @@ def generate_psychological_report(chat_data):
         chunks.append("\n".join(current_lines))
 
     total_parts = len(chunks)
+    if progress_cb:
+        progress_cb(stage='chunking', chunk_total=total_parts, chunk_current=0)
     print(f"Prepared {total_parts} chat chunk(s) for report generation.")
     if total_parts > 1 and rpm_limit < 10:
         min_request_interval = 60.0
         print("Chunked mode enabled; waiting 60s before first OpenAI request.")
         time.sleep(min_request_interval)
+
+    metadata_section = build_report_metadata(chat_data)
 
     if total_parts == 1:
         prompt = f"""
@@ -433,6 +530,8 @@ def generate_psychological_report(chat_data):
         Provide a comprehensive analysis of the individuals' psychological states, emotions,
         and relationships.
         """
+        if progress_cb:
+            progress_cb(stage='chunks', chunk_total=1, chunk_current=1)
         content = call_openai_with_backoff(
             prompt,
             model_name,
@@ -441,12 +540,16 @@ def generate_psychological_report(chat_data):
         )
         if content is None:
             return "Error: Rate limit exceeded after multiple attempts. Please try again later."
+        if metadata_section:
+            content = f"{metadata_section}\n\n{content}"
         with open(cache_path, "w", encoding="utf-8") as cached:
             cached.write(content)
         return content
 
     partial_summaries = []
     for idx, chunk in enumerate(chunks, start=1):
+        if progress_cb:
+            progress_cb(stage='chunks', chunk_total=total_parts, chunk_current=idx)
         print(f"Submitting chunk {idx}/{total_parts} to OpenAI.")
         prompt = f"""
         You will receive a WhatsApp chat snippet (part {idx}/{total_parts}).
@@ -468,6 +571,8 @@ def generate_psychological_report(chat_data):
             return "Error: Rate limit exceeded after multiple attempts. Please try again later."
         partial_summaries.append(summary)
 
+    if progress_cb:
+        progress_cb(stage='final', chunk_total=total_parts, chunk_current=total_parts)
     print("Submitting final combined summary request to OpenAI.")
     combined_prompt = f"""
     You received {total_parts} partial summaries from a WhatsApp chat. Combine them into a
@@ -486,6 +591,8 @@ def generate_psychological_report(chat_data):
     )
     if content is None:
         return "Error: Rate limit exceeded after multiple attempts. Please try again later."
+    if metadata_section:
+        content = f"{metadata_section}\n\n{content}"
     with open(cache_path, "w", encoding="utf-8") as cached:
         cached.write(content)
     return content
