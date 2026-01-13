@@ -604,6 +604,18 @@ def generate_word_report(analysis_text, file_name):
     doc = Document()
     doc.add_heading('Psychological Analysis Report', 0)
 
+    def is_table_separator(line):
+        stripped = line.strip()
+        if not stripped.startswith('|') or not stripped.endswith('|'):
+            return False
+        cells = [cell.strip() for cell in stripped.strip('|').split('|')]
+        if not cells:
+            return False
+        return all(cell and set(cell) <= {'-'} for cell in cells)
+
+    def parse_table_row(line):
+        return [cell.strip() for cell in line.strip().strip('|').split('|')]
+
     def add_markdown_runs(paragraph, text):
         token_pattern = r'(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)'
         parts = re.split(token_pattern, text)
@@ -622,23 +634,59 @@ def generate_word_report(analysis_text, file_name):
             else:
                 paragraph.add_run(part)
 
+    def set_cell_text(cell, text, bold=False):
+        cell.text = ""
+        para = cell.paragraphs[0]
+        if bold:
+            run = para.add_run(text)
+            run.bold = True
+        else:
+            add_markdown_runs(para, text)
+
     def render_markdown_to_docx(text):
-        for raw_line in text.splitlines():
+        lines = text.splitlines()
+        i = 0
+        while i < len(lines):
+            raw_line = lines[i]
             line = raw_line.rstrip()
             if not line:
                 doc.add_paragraph("")
+                i += 1
+                continue
+            if line.startswith('|') and i + 1 < len(lines) and is_table_separator(lines[i + 1]):
+                header = parse_table_row(line)
+                i += 2
+                body_rows = []
+                while i < len(lines):
+                    body_line = lines[i].rstrip()
+                    if not body_line or not body_line.strip().startswith('|'):
+                        break
+                    body_rows.append(parse_table_row(body_line))
+                    i += 1
+                table = doc.add_table(rows=1, cols=len(header))
+                table.style = 'Table Grid'
+                for col_idx, value in enumerate(header):
+                    set_cell_text(table.cell(0, col_idx), value, bold=True)
+                for row in body_rows:
+                    row_cells = table.add_row().cells
+                    for col_idx, value in enumerate(row):
+                        if col_idx < len(row_cells):
+                            set_cell_text(row_cells[col_idx], value)
                 continue
             if line.startswith('#'):
                 level = len(line) - len(line.lstrip('#'))
                 heading_text = line[level:].strip()
                 doc.add_heading(heading_text, level=min(max(level, 1), 4))
+                i += 1
                 continue
             if line.startswith(('- ', '* ')):
                 para = doc.add_paragraph(style='List Bullet')
                 add_markdown_runs(para, line[2:].strip())
+                i += 1
                 continue
             para = doc.add_paragraph()
             add_markdown_runs(para, line)
+            i += 1
 
     render_markdown_to_docx(analysis_text)
 
