@@ -259,8 +259,8 @@ def index():
             return redirect(url_for('index'))
 
     prompt_preview = PROMPT_TEMPLATE.format(
-        part=1,
-        total_parts=1,
+        part="{part}",
+        total_parts="{total_parts}",
         chat_text="{chat_text}"
     )
     return render_template('index.html', prompt_preview=prompt_preview)
