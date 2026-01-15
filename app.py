@@ -53,7 +53,7 @@ report_index_lock = threading.Lock()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 if not openai.api_key:
-    raise ValueError("OpenAI API key not set. Please configure it in the environment variable.")
+    print("Warning: OPENAI_API_KEY not set. Report generation will be disabled.")
 
 report_jobs = {}
 report_jobs_lock = threading.Lock()
@@ -532,6 +532,8 @@ def upload_csv():
 # Function to generate a psychological report
 def call_openai_with_backoff(prompt, model_name, min_request_interval, rpm_limit):
     global openai_last_request_ts
+    if not openai.api_key:
+        return None
     retry_attempts = 5
     max_delay = 60.0
 

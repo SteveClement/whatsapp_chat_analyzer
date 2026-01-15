@@ -1,5 +1,5 @@
 # WhatsApp Chat Analyzer
-[![CI](/actions/workflows/ci-cd.yml/badge.svg)](/actions/workflows/ci-cd.yml)
+[![CI](../../actions/workflows/ci-cd.yml/badge.svg)](../../actions/workflows/ci-cd.yml)
 
 ## Overview
 
@@ -85,7 +85,7 @@ In GitHub Actions, set the repository variable `DEPLOY_HEROKU=true` to enable de
 heroku buildpacks:add --index 1 heroku-community/apt
 heroku create
 heroku git:remote -a your-heroku-app-name
-git push heroku master
+git push heroku main
 ```
 
 ## Usage
