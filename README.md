@@ -2,24 +2,24 @@
 
 ## Overview
 
-The **WhatsApp Chat Analyzer** is a web-based application that allows users to upload WhatsApp chat logs in `.txt` format and analyze them. The application processes the chat data and generates insights such as average reply times, message counts, and more. Additionally, users can upload CSV or Excel files to further analyze the data and download a psychological report on the chat participants.
+The **WhatsApp Chat Analyzer** is a web-based application that allows users to upload WhatsApp and Matrix chat logs in `.txt` format and analyze them. The application processes the chat data and generates insights such as average reply times, message counts, and more. Additionally, users can upload CSV or Excel files to further analyze the data and download a psychological report on the chat participants.
 
 ## Features
 
-- Upload WhatsApp chat logs in `.txt` format for analysis.
+- Upload WhatsApp/Matrix chat logs in `.txt` format for analysis.
 - Upload CSV/Excel files for advanced analysis.
-- Download processed chat data in CSV format.
+- Download processed chat data in Excel format.
 - Generate psychological reports from CSV/Excel data.
 - Responsive design and clean user interface using Bootstrap.
 - Includes validation for file types before uploading.
   
 ## Tech Stack
 
-- **Backend**: Flask (Python) ![Flask](https://img.shields.io/badge/Flask-%23000.svg?style=for-the-badge&logo=flask&logoColor=white)
-- **Frontend**: HTML, CSS, JavaScript, jQuery, Bootstrap ![HTML5](https://img.shields.io/badge/HTML5-%23E34F26.svg?style=for-the-badge&logo=html5&logoColor=white) ![CSS3](https://img.shields.io/badge/CSS3-%231572B6.svg?style=for-the-badge&logo=css3&logoColor=white) ![JavaScript](https://img.shields.io/badge/JavaScript-%23F7DF1E.svg?style=for-the-badge&logo=javascript&logoColor=black) ![jQuery](https://img.shields.io/badge/jQuery-%230769AD.svg?style=for-the-badge&logo=jquery&logoColor=white) ![Bootstrap](https://img.shields.io/badge/Bootstrap-%23563D7C.svg?style=for-the-badge&logo=bootstrap&logoColor=white)
-- **Processing**: Pandas for CSV/Excel data manipulation ![Pandas](https://img.shields.io/badge/Pandas-%23150458.svg?style=for-the-badge&logo=pandas&logoColor=white) 
-- **Deployment**: Gunicorn, Heroku ![Gunicorn](https://img.shields.io/badge/Gunicorn-%298729.svg?style=for-the-badge&logo=gunicorn&logoColor=white) ![Heroku](https://img.shields.io/badge/Heroku-%23430098.svg?style=for-the-badge&logo=heroku&logoColor=white) 
-- **AI Integration**: OpenAI GPT-4 API for human psychology report generation ![OpenAI](https://img.shields.io/badge/OpenAI-%231A1A1A.svg?style=for-the-badge&logo=openai&logoColor=white) 
+- **Backend**: ![Flask](https://img.shields.io/badge/Flask-%23000.svg?style=for-the-badge&logo=flask&logoColor=white)
+- **Frontend**: ![HTML5](https://img.shields.io/badge/HTML5-%23E34F26.svg?style=for-the-badge&logo=html5&logoColor=white) ![CSS3](https://img.shields.io/badge/CSS3-%231572B6.svg?style=for-the-badge&logo=css3&logoColor=white) ![JavaScript](https://img.shields.io/badge/JavaScript-%23F7DF1E.svg?style=for-the-badge&logo=javascript&logoColor=black) ![jQuery](https://img.shields.io/badge/jQuery-%230769AD.svg?style=for-the-badge&logo=jquery&logoColor=white) ![Bootstrap](https://img.shields.io/badge/Bootstrap-%23563D7C.svg?style=for-the-badge&logo=bootstrap&logoColor=white)
+- **Processing**: ![Pandas](https://img.shields.io/badge/Pandas-%23150458.svg?style=for-the-badge&logo=pandas&logoColor=white) for CSV/Excel data manipulation
+- **Deployment**: ![Gunicorn](https://img.shields.io/badge/Gunicorn-%298729.svg?style=for-the-badge&logo=gunicorn&logoColor=white) ![Heroku](https://img.shields.io/badge/Heroku-%23430098.svg?style=for-the-badge&logo=heroku&logoColor=white) 
+- **AI Integration**: ![OpenAI](https://img.shields.io/badge/OpenAI-%231A1A1A.svg?style=for-the-badge&logo=openai&logoColor=white) GPT-4 API for human psychology report generation
 
 ## Installation
 
@@ -77,16 +77,19 @@ OPENAI_RPM_LIMIT=3 CHAT_CHUNK_MAX_CHARS=8000 python app.py
 5. **Deploy on Heroku:**
 
 Use the `Procfile` provided for deployment on Heroku.
+Create a Heroku app first, then add the `apt` buildpack and use the included `Aptfile` for system deps:
 
 ```bash
+heroku buildpacks:add --index 1 heroku-community/apt
 heroku create
+heroku git:remote -a your-heroku-app-name
 git push heroku master
 ```
 
 ## Usage
 
-1. **Uploading a WhatsApp chat log:**
-   - Browse and select a `.txt` file containing a WhatsApp chat export.
+1. **Uploading a WhatsApp/Matrix chat log:**
+   - Browse and select a `.txt` file containing a WhatsApp/Matrix chat export.
    - Once uploaded, the chat log will be processed and analyzed.
 
 2. **Download CSV:**
@@ -99,6 +102,7 @@ git push heroku master
 
 - Desktop export: `[dd/mm/yyyy, HH:MM:SS] Sender: message` (also accepts `dd.mm.yyyy`).
 - Mobile export: `m/d/yy, HH:MM - Sender: message` (system lines without a sender are supported).
+- Matrix export: `Wed, Dec 10, 2025, 06:04:03 - Sender: message` (room events without a sender are supported).
 
 ## CSV/Excel Input Format
 
