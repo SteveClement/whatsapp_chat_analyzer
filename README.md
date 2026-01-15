@@ -1,9 +1,9 @@
-# WhatsApp Chat Analyzer
+# WhatsApp/Matrix Chat Analyzer
 [![CI](../../actions/workflows/ci-cd.yml/badge.svg)](../../actions/workflows/ci-cd.yml)
 
 ## Overview
 
-The **WhatsApp Chat Analyzer** is a web-based application that allows users to upload WhatsApp and Matrix chat logs in `.txt` format and analyze them. The application processes the chat data and generates insights such as average reply times, message counts, and more. Additionally, users can upload CSV or Excel files to further analyze the data and download a psychological report on the chat participants.
+The **WhatsApp/Matrix Chat Analyzer** is a web-based application that allows users to upload WhatsApp and Matrix chat logs in `.txt` format and analyze them. The application processes the chat data and generates insights such as average reply times, message counts, and more. Additionally, users can upload CSV or Excel files to further analyze the data and download a psychological report on the chat participants.
 
 ## Features
 
@@ -34,10 +34,12 @@ cd whatsapp_chat_analyzer
 2. **Install dependencies:**
 
 ```bash
-python3 -m venv venv
-source ./venv/bin/activate
-pip install -U setuptools pip
-pip install -r requirements.txt
+# If uv is not installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv python install $(cat .python-version)
+uv venv --python $(cat .python-version)
+source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
 
 3. **Set up environment variables:**

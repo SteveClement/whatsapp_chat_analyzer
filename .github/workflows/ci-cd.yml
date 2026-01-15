@@ -22,11 +22,17 @@ jobs:
 
       # Step 2: Set up Python
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version-file: ".python-version"
 
-      # Step 3: Install dependencies
+      # Step 3: Install uv
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.25"
+
+      # Step 4: Install dependencies
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -34,22 +40,29 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          uv python install "$(cat .python-version)"
+          uv venv --python "$(cat .python-version)"
+          uv pip install -r requirements.txt
 
-      # Step 4: Set environment variables (including OpenAI API key and Flask secret key)
+      - name: Activate venv
+        run: |
+          source .venv/bin/activate
+
+      # Step 5: Set environment variables (including OpenAI API key and Flask secret key)
       - name: Set environment variables
         run: |
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
           echo "FLASK_SECRET_KEY=${{ secrets.FLASK_SECRET_KEY }}" >> $GITHUB_ENV
 
-      # Step 5: Install Heroku CLI
+      # TODO: Insert tests here
+
+      # Step 6: Install Heroku CLI
       - name: Install Heroku CLI
         if: ${{ vars.DEPLOY_HEROKU == 'true' && env.HEROKU_API_KEY != '' && env.HEROKU_APP_NAME != '' && env.HEROKU_EMAIL != '' }}
         run: |
           curl https://cli-assets.heroku.com/install.sh | sh
 
-      # Step 6: Deploy to Heroku
+      # Step 7: Deploy to Heroku
       - name: Deploy to Heroku
         if: ${{ vars.DEPLOY_HEROKU == 'true' && env.HEROKU_API_KEY != '' && env.HEROKU_APP_NAME != '' && env.HEROKU_EMAIL != '' }}
         uses: akhileshns/heroku-deploy@v3.13.15
