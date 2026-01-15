@@ -188,3 +188,11 @@ h4>strong {
     margin: 0;
     font-size: 13px;
 }
+
+.privacy-toggle {
+    color: #e6edf3;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}

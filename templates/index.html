@@ -52,8 +52,18 @@
             </div>
         </div>
 
+        <div class="row">
+            <div class="col-md-12 text-center">
+                <label class="privacy-toggle">
+                    <input type="checkbox" id="privacy_mode" name="privacy_mode" form="upload-form"
+                           {% if privacy_mode %}checked{% endif %}>
+                    Privacy mode (do not store reports or cache)
+                </label>
+            </div>
+        </div>
+
         <!-- Form to upload WhatsApp/Matrix chat file -->
-        <form name="upload" method="POST" action="/" enctype="multipart/form-data" accept-charset="utf-8">
+        <form id="upload-form" name="upload" method="POST" action="/" enctype="multipart/form-data" accept-charset="utf-8">
             <div class="row">
                 <div class="col-md-6 col-md-offset-3 center">
                     <div class="btn-container">
@@ -93,7 +103,8 @@
         </div>
 
         <!-- New form to upload CSV/Excel file -->
-        <form name="upload_csv" method="POST" action="{{ url_for('upload_csv') }}" enctype="multipart/form-data">
+        <form id="upload-csv-form" name="upload_csv" method="POST" action="{{ url_for('upload_csv') }}" enctype="multipart/form-data">
+            <input type="hidden" name="privacy_mode" value="{% if privacy_mode %}1{% else %}0{% endif %}">
             <div class="csv-upload-container">
                 <div class="row">
                     <div class="col-md-6 col-md-offset-3 center">

@@ -1,4 +1,9 @@
 $(document).ready(function(){
+    function syncPrivacyMode() {
+        var isChecked = $("#privacy_mode").is(":checked");
+        $("#upload-csv-form input[name='privacy_mode']").val(isChecked ? "1" : "0");
+    }
+
     // Disable the submit buttons initially
     $("#submitbtn").prop("disabled", true);  
     $("#submitcsvbtn").prop("disabled", true);  
@@ -36,6 +41,12 @@ $(document).ready(function(){
             $("#fakebtn").show();  // Show the fake button
         }
     });
+
+    $("#privacy_mode").change(function() {
+        syncPrivacyMode();
+    });
+
+    syncPrivacyMode();
 
     // Trigger file input on click of the browse button for .csv/.xlsx file
     $('#btncsvup').click(function(){

@@ -118,7 +118,7 @@ def add_report_record(job_id, report_path, html_path, cached):
     save_report_index(entries)
 
 
-def start_report_job(input_path, suffix, use_cache=True, job_id=None):
+def start_report_job(input_path, suffix, use_cache=True, job_id=None, privacy_mode=False):
     if job_id is None:
         job_id = uuid.uuid4().hex
     session['report_job_id'] = job_id
@@ -130,7 +130,8 @@ def start_report_job(input_path, suffix, use_cache=True, job_id=None):
         status='queued',
         message='Queued for processing.',
         input_file=input_path,
-        cached=False
+        cached=False,
+        privacy_mode=privacy_mode
     )
 
     def process_report():
@@ -148,18 +149,22 @@ def start_report_job(input_path, suffix, use_cache=True, job_id=None):
             psychological_analysis, from_cache = generate_psychological_report(
                 df,
                 progress_cb=progress_cb,
-                use_cache=use_cache
+                use_cache=use_cache,
+                write_cache=not privacy_mode
             )
             if psychological_analysis.startswith("Error:"):
                 update_report_job(job_id, status='error', message=psychological_analysis)
                 return
             report_path = generate_word_report(psychological_analysis, "psychological_report.docx")
             html_path = generate_html_report(psychological_analysis, "psychological_report.html")
-            report_dest = os.path.join(cache_dir, f"report_{job_id}.docx")
-            html_dest = os.path.join(cache_dir, f"report_{job_id}.html")
-            shutil.move(report_path, report_dest)
-            shutil.move(html_path, html_dest)
-            add_report_record(job_id, report_dest, html_dest, from_cache)
+            report_dest = report_path
+            html_dest = html_path
+            if not privacy_mode:
+                report_dest = os.path.join(cache_dir, f"report_{job_id}.docx")
+                html_dest = os.path.join(cache_dir, f"report_{job_id}.html")
+                shutil.move(report_path, report_dest)
+                shutil.move(html_path, html_dest)
+                add_report_record(job_id, report_dest, html_dest, from_cache)
             message = 'Report ready (from cache).' if from_cache else 'Report ready.'
             update_report_job(
                 job_id,
@@ -305,6 +310,7 @@ def parse_whatsapp_chat(file):
 def index():
     if request.method == 'POST':
         file = request.files.get('fileup')
+        session['privacy_mode'] = bool(request.form.get('privacy_mode'))
         if file and file.filename.endswith('.txt'):
             # Parse the uploaded file
             parsed_chat = parse_whatsapp_chat(file)
@@ -357,6 +363,7 @@ def index():
         if job and job.get("path") and not job.get("downloaded"):
             output_ready = True
     report_job_id = session.get('report_job_id')
+    privacy_mode = session.get('privacy_mode', False)
 
     prompt_preview = PROMPT_TEMPLATE.format(
         part="{part}",
@@ -368,7 +375,8 @@ def index():
         prompt_preview=prompt_preview,
         output_ready=output_ready,
         output_job_id=output_job_id,
-        report_job_id=report_job_id
+        report_job_id=report_job_id,
+        privacy_mode=privacy_mode
     )
 
 @app.route('/download_report', methods=['GET'])
@@ -463,7 +471,8 @@ def report_status(job_id):
         "chunk_current": job.get("chunk_current"),
         "chunk_total": job.get("chunk_total"),
         "cached": job.get("cached", False),
-        "can_regenerate": bool(job.get("input_file"))
+        "can_regenerate": bool(job.get("input_file")),
+        "privacy_mode": bool(job.get("privacy_mode"))
     }
 
 @app.route('/report_status_page/<job_id>', methods=['GET'])
@@ -482,6 +491,9 @@ def report_regenerate(job_id):
     if not job or not job.get('input_file'):
         flash("Source file was discarded. Re-upload to regenerate.", "error")
         return redirect(url_for('index'))
+    if job.get('privacy_mode'):
+        flash("Privacy mode enabled. Re-upload to regenerate.", "error")
+        return redirect(url_for('index'))
     input_path = job['input_file']
     if not os.path.exists(input_path):
         flash("Source file no longer exists.", "error")
@@ -494,12 +506,24 @@ def report_regenerate(job_id):
 @app.route('/upload_csv', methods=['POST'])
 def upload_csv():
     file = request.files.get('file_csv')
+    session['privacy_mode'] = bool(request.form.get('privacy_mode'))
     if file and (file.filename.endswith('.csv') or file.filename.endswith('.xlsx')):
         suffix = '.csv' if file.filename.endswith('.csv') else '.xlsx'
         job_id = uuid.uuid4().hex
-        input_path = os.path.join(cache_dir, f"report_input_{job_id}{suffix}")
+        privacy_mode = session.get('privacy_mode', False)
+        if privacy_mode:
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            input_path = temp_file.name
+        else:
+            input_path = os.path.join(cache_dir, f"report_input_{job_id}{suffix}")
         file.save(input_path)
-        start_report_job(input_path, suffix, use_cache=True, job_id=job_id)
+        start_report_job(
+            input_path,
+            suffix,
+            use_cache=not privacy_mode,
+            job_id=job_id,
+            privacy_mode=privacy_mode
+        )
         return redirect(url_for('report_status_page', job_id=job_id))
 
     flash("Invalid file format. Please upload a CSV or Excel file.", 'error')
@@ -639,7 +663,7 @@ def build_report_metadata(chat_data):
     return "\n".join(lines)
 
 
-def generate_psychological_report(chat_data, progress_cb=None, use_cache=True):
+def generate_psychological_report(chat_data, progress_cb=None, use_cache=True, write_cache=True):
     # Convert the chat data to a readable format
     chat_text = ""
     for index, row in chat_data.iterrows():
@@ -709,8 +733,9 @@ def generate_psychological_report(chat_data, progress_cb=None, use_cache=True):
             return "Error: Rate limit exceeded after multiple attempts. Please try again later.", False
         if metadata_section:
             content = f"{metadata_section}\n\n{content}"
-        with open(cache_path, "w", encoding="utf-8") as cached:
-            cached.write(content)
+        if write_cache:
+            with open(cache_path, "w", encoding="utf-8") as cached:
+                cached.write(content)
         return content, False
 
     partial_summaries = []
@@ -759,8 +784,9 @@ def generate_psychological_report(chat_data, progress_cb=None, use_cache=True):
         return "Error: Rate limit exceeded after multiple attempts. Please try again later.", False
     if metadata_section:
         content = f"{metadata_section}\n\n{content}"
-    with open(cache_path, "w", encoding="utf-8") as cached:
-        cached.write(content)
+    if write_cache:
+        with open(cache_path, "w", encoding="utf-8") as cached:
+            cached.write(content)
     return content, False
 
 
@@ -1002,20 +1028,57 @@ def report_list():
 def report_html(job_id):
     entries = load_report_index()
     entry = next((item for item in entries if item.get("job_id") == job_id), None)
-    if not entry or not entry.get('html_file') or not os.path.exists(entry['html_file']):
+    if entry and entry.get('html_file') and os.path.exists(entry['html_file']):
+        return send_file(entry['html_file'])
+
+    job = get_report_job(job_id)
+    if not job or not job.get('html_file') or not os.path.exists(job['html_file']):
         flash("No HTML report available.", "error")
         return redirect(url_for('index'))
-    return send_file(entry['html_file'])
+
+    html_file = job['html_file']
+
+    @after_this_request
+    def remove_file(response):
+        if job.get('privacy_mode'):
+            try:
+                os.remove(html_file)
+                job['html_file'] = None
+            except Exception as e:
+                print(f"Error deleting file: {str(e)}")
+        return response
+
+    return send_file(html_file)
 
 @app.route('/report_docx/<job_id>', methods=['GET'])
 def report_docx(job_id):
     entries = load_report_index()
     entry = next((item for item in entries if item.get("job_id") == job_id), None)
-    if not entry or not entry.get('report_file') or not os.path.exists(entry['report_file']):
+    if entry and entry.get('report_file') and os.path.exists(entry['report_file']):
+        report_file = entry['report_file']
+        return send_file(
+            report_file,
+            as_attachment=True,
+            download_name=f"psychological_report_{job_id}.docx"
+        )
+
+    job = get_report_job(job_id)
+    if not job or not job.get('report_file') or not os.path.exists(job['report_file']):
         flash("No report available.", "error")
         return redirect(url_for('index'))
 
-    report_file = entry['report_file']
+    report_file = job['report_file']
+
+    @after_this_request
+    def remove_file(response):
+        if job.get('privacy_mode'):
+            try:
+                os.remove(report_file)
+                job['report_file'] = None
+            except Exception as e:
+                print(f"Error deleting file: {str(e)}")
+        return response
+
     return send_file(
         report_file,
         as_attachment=True,
