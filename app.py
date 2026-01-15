@@ -129,6 +129,7 @@ def parse_whatsapp_chat(file):
         r'^(\d{1,2})/(\d{1,2})/(\d{2,4}), '
         r'(\d{1,2}:\d{2})(?:\s?(AM|PM))? - (.*)$'
     )
+    matrix_pattern = r'^([A-Za-z]{3}, [A-Za-z]{3} \d{1,2}, \d{4}, \d{2}:\d{2}:\d{2}) - (.*)$'
     chat_data = []
     current_message = None
 
@@ -193,6 +194,31 @@ def parse_whatsapp_chat(file):
                 if not sep:
                     sender = 'System'
                     message = rest
+            else:
+                match = re.match(matrix_pattern, line)
+                if match:
+                    date_str = match.group(1)
+                    rest = match.group(2)
+                    try:
+                        date_time_obj = datetime.strptime(date_str, '%a, %b %d, %Y, %H:%M:%S')
+                    except ValueError as ve:
+                        print(f"Date parsing error: {ve} for line: {line}")
+                        continue
+
+                    sender = None
+                    message = None
+                    sender, sep, message = rest.partition(': ')
+                    if not sep:
+                        action_match = re.match(
+                            r'^(?P<sender>.+?)\s+(?P<action>(joined|left|invited|changed|made|has|sent).+)$',
+                            rest
+                        )
+                        if action_match:
+                            sender = action_match.group('sender')
+                            message = action_match.group('action')
+                        else:
+                            sender = 'System'
+                            message = rest
 
         if date_time_obj is not None:
             chat_data.append({
