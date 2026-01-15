@@ -15,7 +15,7 @@
                 <p class="white" id="status-line">Checking status...</p>
                 <p class="white" id="status-message"></p>
                 <p class="white" id="status-progress"></p>
-                <a id="download-link" class="btn btn-success" href="{{ url_for('download_psychological_report') }}" style="display:none;">
+                <a id="download-link" class="btn btn-success" href="{{ url_for('report_docx', job_id=job_id) }}" style="display:none;">
                     Download Psychological Report
                 </a>
                 <a id="html-link" class="btn btn-default" href="{{ url_for('report_html', job_id=job_id) }}" style="display:none;">
@@ -59,7 +59,7 @@
                 if (data.status === "done") {
                     downloadLink.style.display = "inline-block";
                     htmlLink.style.display = "inline-block";
-                    if (data.cached) {
+                    if (data.can_regenerate) {
                         regenLink.style.display = "inline-block";
                     } else {
                         regenLink.style.display = "none";

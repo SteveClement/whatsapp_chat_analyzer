@@ -13,6 +13,8 @@ import math
 import threading
 import uuid
 import html
+import json
+import shutil
 import openai
 from openai import RateLimitError, APIError
 import time
@@ -44,6 +46,8 @@ PROMPT_TEMPLATE = (
     "Provide a comprehensive analysis of the individuals' psychological states, emotions, "
     "and relationships."
 )
+report_index_path = os.path.join(cache_dir, "report_index.json")
+report_index_lock = threading.Lock()
 
 # Set the OpenAI API key from the environment variable
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -53,6 +57,8 @@ if not openai.api_key:
 
 report_jobs = {}
 report_jobs_lock = threading.Lock()
+output_jobs = {}
+output_jobs_lock = threading.Lock()
 
 
 def update_report_job(job_id, **updates):
@@ -63,6 +69,53 @@ def update_report_job(job_id, **updates):
 def get_report_job(job_id):
     with report_jobs_lock:
         return report_jobs.get(job_id)
+
+
+def set_output_job(job_id, path):
+    with output_jobs_lock:
+        output_jobs[job_id] = {"path": path, "downloaded": False}
+
+
+def get_output_job(job_id):
+    with output_jobs_lock:
+        return output_jobs.get(job_id)
+
+
+def mark_output_downloaded(job_id):
+    with output_jobs_lock:
+        job = output_jobs.get(job_id)
+        if job:
+            job["downloaded"] = True
+        return job
+
+
+def load_report_index():
+    if not os.path.exists(report_index_path):
+        return []
+    with report_index_lock:
+        try:
+            with open(report_index_path, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return []
+
+
+def save_report_index(entries):
+    with report_index_lock:
+        with open(report_index_path, "w", encoding="utf-8") as handle:
+            json.dump(entries, handle, indent=2)
+
+
+def add_report_record(job_id, report_path, html_path, cached):
+    entries = load_report_index()
+    entries.append({
+        "job_id": job_id,
+        "report_file": report_path,
+        "html_file": html_path,
+        "cached": cached,
+        "created_at": datetime.utcnow().isoformat() + "Z"
+    })
+    save_report_index(entries)
 
 
 def start_report_job(input_path, suffix, use_cache=True, job_id=None):
@@ -102,17 +155,29 @@ def start_report_job(input_path, suffix, use_cache=True, job_id=None):
                 return
             report_path = generate_word_report(psychological_analysis, "psychological_report.docx")
             html_path = generate_html_report(psychological_analysis, "psychological_report.html")
+            report_dest = os.path.join(cache_dir, f"report_{job_id}.docx")
+            html_dest = os.path.join(cache_dir, f"report_{job_id}.html")
+            shutil.move(report_path, report_dest)
+            shutil.move(html_path, html_dest)
+            add_report_record(job_id, report_dest, html_dest, from_cache)
             message = 'Report ready (from cache).' if from_cache else 'Report ready.'
             update_report_job(
                 job_id,
                 status='done',
                 message=message,
-                report_file=report_path,
-                html_file=html_path,
-                cached=from_cache
+                report_file=report_dest,
+                html_file=html_dest,
+                cached=from_cache,
+                input_file=None
             )
         except Exception as exc:
             update_report_job(job_id, status='error', message=f"Error: {exc}")
+        finally:
+            if os.path.exists(input_path):
+                try:
+                    os.remove(input_path)
+                except OSError:
+                    pass
 
     worker = threading.Thread(target=process_report, daemon=True)
     worker.start()
@@ -278,18 +343,33 @@ def index():
                 avg_reply_df.to_excel(writer, sheet_name='Avg Reply Time', index=False)
 
             # Store the file path for download
-            session['output_file'] = output_path
-            session['file_downloaded'] = False  # Track download status
+            output_job_id = uuid.uuid4().hex
+            set_output_job(output_job_id, output_path)
+            session['output_job_id'] = output_job_id
 
             flash("File processed successfully.", "success")
             return redirect(url_for('index'))
+
+    output_job_id = session.get('output_job_id')
+    output_ready = False
+    if output_job_id:
+        job = get_output_job(output_job_id)
+        if job and job.get("path") and not job.get("downloaded"):
+            output_ready = True
+    report_job_id = session.get('report_job_id')
 
     prompt_preview = PROMPT_TEMPLATE.format(
         part="{part}",
         total_parts="{total_parts}",
         chat_text="{chat_text}"
     )
-    return render_template('index.html', prompt_preview=prompt_preview)
+    return render_template(
+        'index.html',
+        prompt_preview=prompt_preview,
+        output_ready=output_ready,
+        output_job_id=output_job_id,
+        report_job_id=report_job_id
+    )
 
 @app.route('/download_report', methods=['GET'])
 def download_report():
@@ -329,31 +409,39 @@ def download_psychological_report():
 
     return send_file(report_file, as_attachment=True, download_name="psychological_analysis_report.docx")
 
-@app.route('/download', methods=['GET'])
-def download():
-    output_file = session.get('output_file')
-    if not output_file or not os.path.exists(output_file):
+@app.route('/download/<job_id>', methods=['GET'])
+def download_output(job_id):
+    if session.get('output_job_id') != job_id:
         flash("No file available to download.", "error")
         return redirect(url_for('index'))
 
-    if session.get('file_downloaded'):
+    job = get_output_job(job_id)
+    if not job or not job.get("path") or not os.path.exists(job["path"]):
+        flash("No file available to download.", "error")
+        return redirect(url_for('index'))
+
+    if job.get("downloaded"):
         flash("The file has already been downloaded.", "error")
         return redirect(url_for('index'))
 
-    session['file_downloaded'] = True
+    mark_output_downloaded(job_id)
+    output_file = job["path"]
 
     @after_this_request
     def remove_file(response):
         try:
             os.remove(output_file)
-            session.pop('output_file', None)  # Clear session after file is removed
-            session.pop('file_downloaded', None)  # Reset download state
+            session.pop('output_job_id', None)
             flash("Download complete. The session has been reset.", "success")
         except Exception as e:
             print(f"Error deleting file: {str(e).encode('utf-8', errors='ignore')}")
         return response
 
-    return send_file(output_file, as_attachment=True, download_name="parsed_chat_with_reply_times.xlsx")
+    return send_file(
+        output_file,
+        as_attachment=True,
+        download_name=f"parsed_chat_{job_id}.xlsx"
+    )
 
 @app.route('/report_status/<job_id>', methods=['GET'])
 def report_status(job_id):
@@ -374,7 +462,8 @@ def report_status(job_id):
         "stage": job.get("stage"),
         "chunk_current": job.get("chunk_current"),
         "chunk_total": job.get("chunk_total"),
-        "cached": job.get("cached", False)
+        "cached": job.get("cached", False),
+        "can_regenerate": bool(job.get("input_file"))
     }
 
 @app.route('/report_status_page/<job_id>', methods=['GET'])
@@ -391,7 +480,7 @@ def report_regenerate(job_id):
         return redirect(url_for('index'))
     job = get_report_job(job_id)
     if not job or not job.get('input_file'):
-        flash("No source file available for regeneration.", "error")
+        flash("Source file was discarded. Re-upload to regenerate.", "error")
         return redirect(url_for('index'))
     input_path = job['input_file']
     if not os.path.exists(input_path):
@@ -894,14 +983,12 @@ def generate_html_report(analysis_text, file_name):
 
 @app.route('/reports', methods=['GET'])
 def report_list():
-    job_ids = session.get('report_job_ids', [])
+    entries = load_report_index()
     reports = []
-    for job_id in job_ids:
-        job = get_report_job(job_id)
-        if not job or job.get('status') != 'done':
-            continue
-        report_file = job.get('report_file')
-        html_file = job.get('html_file')
+    for entry in entries:
+        report_file = entry.get("report_file")
+        html_file = entry.get("html_file")
+        job_id = entry.get("job_id")
         if report_file and os.path.exists(report_file):
             reports.append({
                 "job_id": job_id,
@@ -913,37 +1000,27 @@ def report_list():
 
 @app.route('/report_html/<job_id>', methods=['GET'])
 def report_html(job_id):
-    if session.get('report_job_id') != job_id and job_id not in session.get('report_job_ids', []):
-        flash("Invalid report job.", "error")
-        return redirect(url_for('index'))
-    job = get_report_job(job_id)
-    if not job or not job.get('html_file') or not os.path.exists(job['html_file']):
+    entries = load_report_index()
+    entry = next((item for item in entries if item.get("job_id") == job_id), None)
+    if not entry or not entry.get('html_file') or not os.path.exists(entry['html_file']):
         flash("No HTML report available.", "error")
         return redirect(url_for('index'))
-    return send_file(job['html_file'])
+    return send_file(entry['html_file'])
 
 @app.route('/report_docx/<job_id>', methods=['GET'])
 def report_docx(job_id):
-    if session.get('report_job_id') != job_id and job_id not in session.get('report_job_ids', []):
-        flash("Invalid report job.", "error")
-        return redirect(url_for('index'))
-    job = get_report_job(job_id)
-    if not job or not job.get('report_file') or not os.path.exists(job['report_file']):
+    entries = load_report_index()
+    entry = next((item for item in entries if item.get("job_id") == job_id), None)
+    if not entry or not entry.get('report_file') or not os.path.exists(entry['report_file']):
         flash("No report available.", "error")
         return redirect(url_for('index'))
 
-    report_file = job['report_file']
-
-    @after_this_request
-    def remove_report_file(response):
-        try:
-            os.remove(report_file)
-            job['report_file'] = None
-        except Exception as e:
-            print(f"Error deleting file: {str(e)}")
-        return response
-
-    return send_file(report_file, as_attachment=True, download_name="psychological_analysis_report.docx")
+    report_file = entry['report_file']
+    return send_file(
+        report_file,
+        as_attachment=True,
+        download_name=f"psychological_report_{job_id}.docx"
+    )
 
 if __name__ == '__main__':
     host = os.getenv('FLASK_RUN_HOST', '127.0.0.1')
