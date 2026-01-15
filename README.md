@@ -1,4 +1,5 @@
 # WhatsApp Chat Analyzer
+[![CI](/actions/workflows/ci-cd.yml/badge.svg)](/actions/workflows/ci-cd.yml)
 
 ## Overview
 

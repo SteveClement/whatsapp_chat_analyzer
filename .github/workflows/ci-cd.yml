@@ -8,6 +8,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+      HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
+      HEROKU_EMAIL: ${{ secrets.HEROKU_EMAIL }}
 
     steps:
       # Step 1: Checkout the repository
@@ -41,15 +45,15 @@ jobs:
 
       # Step 5: Install Heroku CLI
       - name: Install Heroku CLI
-        if: ${{ secrets.HEROKU_API_KEY != '' && secrets.HEROKU_APP_NAME != '' && secrets.HEROKU_EMAIL != '' && vars.DEPLOY_HEROKU == 'true' }}
+        if: ${{ vars.DEPLOY_HEROKU == 'true' && env.HEROKU_API_KEY != '' && env.HEROKU_APP_NAME != '' && env.HEROKU_EMAIL != '' }}
         run: |
           curl https://cli-assets.heroku.com/install.sh | sh
 
       # Step 6: Deploy to Heroku
       - name: Deploy to Heroku
-        if: ${{ secrets.HEROKU_API_KEY != '' && secrets.HEROKU_APP_NAME != '' && secrets.HEROKU_EMAIL != '' && vars.DEPLOY_HEROKU == 'true' }}
+        if: ${{ vars.DEPLOY_HEROKU == 'true' && env.HEROKU_API_KEY != '' && env.HEROKU_APP_NAME != '' && env.HEROKU_EMAIL != '' }}
         uses: akhileshns/heroku-deploy@v3.12.12
         with:
-          heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
-          heroku_app_name: ${{ secrets.HEROKU_APP_NAME }}
-          heroku_email: ${{ secrets.HEROKU_EMAIL }}
+          heroku_api_key: ${{ env.HEROKU_API_KEY }}
+          heroku_app_name: ${{ env.HEROKU_APP_NAME }}
+          heroku_email: ${{ env.HEROKU_EMAIL }}
