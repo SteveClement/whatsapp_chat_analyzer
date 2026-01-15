@@ -1,4 +1,4 @@
-name: Deploy to Heroku
+name: CI/CD
 
 on:
   push:
@@ -52,7 +52,7 @@ jobs:
       # Step 6: Deploy to Heroku
       - name: Deploy to Heroku
         if: ${{ vars.DEPLOY_HEROKU == 'true' && env.HEROKU_API_KEY != '' && env.HEROKU_APP_NAME != '' && env.HEROKU_EMAIL != '' }}
-        uses: akhileshns/heroku-deploy@v3.12.12
+        uses: akhileshns/heroku-deploy@v3.13.15
         with:
           heroku_api_key: ${{ env.HEROKU_API_KEY }}
           heroku_app_name: ${{ env.HEROKU_APP_NAME }}
