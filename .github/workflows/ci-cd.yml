@@ -39,8 +39,15 @@ jobs:
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
           echo "FLASK_SECRET_KEY=${{ secrets.FLASK_SECRET_KEY }}" >> $GITHUB_ENV
 
-      # Step 5: Deploy to Heroku
+      # Step 5: Install Heroku CLI
+      - name: Install Heroku CLI
+        if: ${{ secrets.HEROKU_API_KEY != '' && secrets.HEROKU_APP_NAME != '' && secrets.HEROKU_EMAIL != '' && vars.DEPLOY_HEROKU == 'true' }}
+        run: |
+          curl https://cli-assets.heroku.com/install.sh | sh
+
+      # Step 6: Deploy to Heroku
       - name: Deploy to Heroku
+        if: ${{ secrets.HEROKU_API_KEY != '' && secrets.HEROKU_APP_NAME != '' && secrets.HEROKU_EMAIL != '' && vars.DEPLOY_HEROKU == 'true' }}
         uses: akhileshns/heroku-deploy@v3.12.12
         with:
           heroku_api_key: ${{ secrets.HEROKU_API_KEY }}

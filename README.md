@@ -77,7 +77,8 @@ OPENAI_RPM_LIMIT=3 CHAT_CHUNK_MAX_CHARS=8000 python app.py
 5. **Deploy on Heroku:**
 
 Use the `Procfile` provided for deployment on Heroku.
-Create a Heroku app first, then add the `apt` buildpack and use the included `Aptfile` for system deps:
+Create a Heroku app first, then add the `apt` buildpack and use the included `Aptfile` for system deps.
+In GitHub Actions, set the repository variable `DEPLOY_HEROKU=true` to enable deploys.
 
 ```bash
 heroku buildpacks:add --index 1 heroku-community/apt
